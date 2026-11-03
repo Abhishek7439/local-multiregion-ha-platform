@@ -28,3 +28,8 @@ Reason: `tc` is installed. As user cloud_automator, `tc qdisc add dev lo root ne
 Options: no limits, or caps sized to the WSL VM.
 Choice: MinIO 512 MiB each, gateway 128 MiB, monitor 64 MiB.
 Reason: The PC has 16 GB, but this WSL VM only exposes about 7.6 GiB to Docker. Caps stop two MinIO processes from taking the whole VM. `docker inspect` showed Memory=536870912 for each MinIO.
+
+## D7 - DR controller v1
+Options: keep the curl monitor only, add the MinIO Python SDK, or use Python's standard library plus the existing `scripts/mc.sh`.
+Choice: `controller/dr_controller.py` on the Ubuntu host. No new package. States are HEALTHY, DEGRADED (3 second grace), FAILOVER, RECOVERING. FAILBACK is not entered.
+Reason: The controller must be small enough to explain. On 2026-11-03 it logged the failure, wrote `gw/demo/rto-20261103T180556Z.txt` on the first attempt, and recorded RTO **3448 ms**. The same bytes were read from the gateway and from Region B. When A returned it logged RECOVERING and stopped there, because failback is allowed only after checksums (M3). HAProxy can still prefer A as soon as A's health check passes. That automatic return is not the controller's FAILBACK.
