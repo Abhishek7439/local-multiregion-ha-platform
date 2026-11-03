@@ -20,5 +20,4 @@ Ubuntu 22.04/24.04 (or WSL2 / Ubuntu VM), Docker Engine + Compose v2, git.
 - Region B console: http://localhost:9201   API: 9200
 
 ## Note
-This scaffold has not been run on your machine yet. If a container exits:
-`docker compose logs <service>` and fix/ask. First run is the real test.
+The gateway is HAProxy. It checks `/minio/health/live` and uses Region B only when Region A fails that check. The old nginx config is still in `gateway/nginx.conf` as the option we measured and did not keep. If a container exits: `docker compose logs <service>`.

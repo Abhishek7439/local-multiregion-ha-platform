@@ -9,9 +9,10 @@ Reason: Chainguard still publishes a free image. Dated tags are not public, so t
 Each region has its own Docker network and volume; only the "global" network
 connects them (this is where I can inject latency/partitions later).
 
-## D3 - Failover mechanism (v1)
-nginx upstream with Region B as backup. Limitation: nginx resolves hostnames at
-start, so it needs a restart if a stopped container's name no longer resolves.
+## D3 - Gateway: nginx or HAProxy
+Options: nginx 1.27 (passive `max_fails` plus `proxy_next_upstream`) and HAProxy 3.4.7 (active `GET /minio/health/live`).
+Choice: HAProxy, image digest sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa. Config is gateway/haproxy.cfg. Region B is a `backup` server.
+Reason: On 2026-11-03, with nginx already running, stopping Region A still allowed the first PUT (1218 ms after the stop) and a GET. Restarting nginx while A was stopped did not. The log was `host not found in upstream "minio-a:9000"`, and both PUT and GET got connection refused. HAProxy passed the same stop test: first PUT succeeded, 2447 ms from stop completion to write completion, and the GET returned `m1-haproxy-proof 1` from Region B. After a gateway restart with A still down, HAProxy reached HTTP 200 and the next PUT succeeded. Docs: https://www.haproxy.com/documentation/haproxy-configuration-tutorials/reliability/health-checks/ and https://hub.docker.com/_/haproxy/
 
 ## D4 - Project directory
 Options: OneDrive path on Windows, /mnt/c inside WSL, Linux home.

@@ -8,7 +8,7 @@ provide high availability, automated disaster recovery, continuous deployment
 |---|-------------|--------------------|--------|
 | 1 | Two independent regions | Separate networks, volumes, containers | [x] |
 | 2 | Data replication A <-> B | MinIO site replication, verified | [x] |
-| 3 | High availability | Gateway serves from B when A is down | [ ] |
+| 3 | High availability | Gateway serves from B when A is down | [x] |
 | 4 | Automated DR | Monitor detects failure, acts without me; RTO/RPO measured | [ ] |
 | 5 | GitOps / continuous deployment | git push -> reconciler applies change automatically | [ ] |
 | 6 | Chaos engineering | Scripted experiments: hypothesis, injection, result | [ ] |
