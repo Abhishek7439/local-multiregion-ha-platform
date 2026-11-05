@@ -36,7 +36,7 @@ services:
     image: haproxy@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa
     depends_on: [minio-a, minio-b]
     networks: [global]
-    ports: ["8080:80"]
+    ports: ["8080:80", "127.0.0.1:9999:9999"]
     volumes: ["./gateway/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"]
     # Official image runs as user haproxy and must be allowed to bind port 80.
     sysctls:

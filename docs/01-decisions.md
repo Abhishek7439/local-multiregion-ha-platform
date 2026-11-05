@@ -29,7 +29,21 @@ Options: no limits, or caps sized to the WSL VM.
 Choice: MinIO 512 MiB each, gateway 128 MiB, monitor 64 MiB.
 Reason: The PC has 16 GB, but this WSL VM only exposes about 7.6 GiB to Docker. Caps stop two MinIO processes from taking the whole VM. `docker inspect` showed Memory=536870912 for each MinIO.
 
-## D7 - DR controller v1
-Options: keep the curl monitor only, add the MinIO Python SDK, or use Python's standard library plus the existing `scripts/mc.sh`.
-Choice: `controller/dr_controller.py` on the Ubuntu host. No new package. States are HEALTHY, DEGRADED (3 second grace), FAILOVER, RECOVERING. FAILBACK is not entered.
-Reason: The controller must be small enough to explain. On 2026-11-03 it logged the failure, wrote `gw/demo/rto-20261103T180556Z.txt` on the first attempt, and recorded RTO **3448 ms**. The same bytes were read from the gateway and from Region B. When A returned it logged RECOVERING and stopped there, because failback is allowed only after checksums (M3). HAProxy can still prefer A as soon as A's health check passes. That automatic return is not the controller's FAILBACK.
+## D7 - DR controller, integrity-based failback, and RPO measurement
+Options: keep curl monitor only, add MinIO Python SDK, or use Python's standard library plus existing `scripts/mc.sh`.
+Choice: `controller/dr_controller.py` on the Ubuntu host using standard library (`urllib`, `socket`, `hashlib`, `subprocess`). No new packages. States: HEALTHY -> DEGRADED (3 second grace) -> FAILOVER -> RECOVERING -> FAILBACK -> HEALTHY.
+Reason: The controller manages automated failover and failback without human intervention. During RECOVERING, it computes SHA-256 hashes across both sites via `compare_sites()`. It strictly refuses to transition to FAILBACK until every object matches (`match: true`), ensuring zero silent divergence before traffic returns to primary.
+
+RPO measurement: rpo_objects 0 for graceful stop and SIGKILL, measured with sequential writes ~400 ms apart. NOT measured under burst/concurrent load; async replication lag under load is untested and RPO must not be assumed 0.
+
+Known limits and open items (planned for M4 / GitOps):
+1. Controller restart during outage (open item for M4): If the controller restarts while Region A is fenced in MAINT, it starts in HEALTHY without querying HAProxy's internal server state, leaving minio-a in MAINT even after A recovers. Proposed fix: on controller startup, query HAProxy admin socket `show stat`; if minio-a is MAINT, start in RECOVERING (run the checksum gate) instead of HEALTHY.
+2. Permanent divergence (open item for M4): If checksums never match (e.g. split-brain conflicting writes), the controller loops indefinitely in RECOVERING with no timeout or alert mechanism.
+Fail-safe note: Both failure modes fail safe — Region A remains fenced in MAINT, and client traffic remains safely routed to Region B without silent corruption.
+3. RPO under burst load (open item for M5 chaos): Untested under concurrent high-throughput write streams; asynchronous replication lag will be stressed during network latency and partition chaos tests.
+
+## D8 - Fencing mechanism and admin socket security
+Options: rely purely on HAProxy health checks for traffic routing, or active controller fencing via HAProxy admin socket (`disable server` / `enable server`).
+Choice: Active fencing over HAProxy admin stats socket on TCP port 9999.
+Reason: Relying only on passive/active health checks allows flapping primaries to immediately receive traffic upon container restart, before replication has completed. The controller fences `minio-a` into `MAINT` during `FAILOVER` and only sends `enable server` after checksum verification passes.
+Security: Inside the container HAProxy listens on `ipv4@0.0.0.0:9999 level admin`, but `docker-compose.yml` publishes it strictly to `127.0.0.1:9999:9999` (loopback only). It is never exposed to the external network or LAN.

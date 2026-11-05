@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""DR controller v1.
+"""DR controller.
 
-Watches Region A. After a short grace period it writes one object through
-the gateway and records RTO. It does not fail back. M3 adds checksums
-and only then may the state become FAILBACK.
+Watches Region A. After a short grace period it disables A on the gateway,
+writes one object through the gateway, and records RTO. When A is back it
+compares SHA-256 checksums and enables A only if every object matches.
 
 RTO starts when Region A first fails the health check and ends when the
 gateway write succeeds. The grace wait is included on purpose.
@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from proof import compare_sites, haproxy_command
 
 ROOT = Path(__file__).resolve().parent.parent
 GRACE_SECONDS = 3
@@ -101,6 +103,11 @@ def main():
                 "to": "FAILOVER",
                 "reason": "region A still down after the grace window",
             })
+            try:
+                reply = haproxy_command("disable server minio_api/minio-a")
+                log_event({"event": "fence", "server": "minio-a", "action": "disable", "reply": reply})
+            except OSError as error:
+                log_event({"event": "fence_failed", "action": "disable", "detail": str(error)})
             wrote = False
             for attempt in range(1, 6):
                 ok, name, write_ms, error = prove_write()
@@ -125,8 +132,45 @@ def main():
                 "event": "transition",
                 "from": "FAILOVER",
                 "to": "RECOVERING",
-                "reason": "region A is live again; FAILBACK waits for checksums in M3",
+                "reason": "region A is live again; checksums must match before FAILBACK",
             })
+        elif state == "RECOVERING" and a_up:
+            try:
+                report = compare_sites()
+            except (RuntimeError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as error:
+                log_event({"event": "checksum_error", "detail": str(error)[-300:]})
+                report = None
+            if report is not None:
+                log_event({
+                    "event": "checksum",
+                    "match": report["match"],
+                    "count_a": report["count_a"],
+                    "count_b": report["count_b"],
+                    "only_a": report["only_a"],
+                    "only_b": report["only_b"],
+                    "different": report["different"],
+                })
+                if report["match"]:
+                    try:
+                        reply = haproxy_command("enable server minio_api/minio-a")
+                    except OSError as error:
+                        log_event({"event": "fence_failed", "action": "enable", "detail": str(error)})
+                    else:
+                        state = "FAILBACK"
+                        log_event({
+                            "event": "transition",
+                            "from": "RECOVERING",
+                            "to": "FAILBACK",
+                            "reason": "checksums match, so Region A may take traffic again",
+                            "reply": reply,
+                        })
+                        state = "HEALTHY"
+                        log_event({
+                            "event": "transition",
+                            "from": "FAILBACK",
+                            "to": "HEALTHY",
+                            "reason": "failback complete",
+                        })
         elif state == "RECOVERING" and not a_up:
             down_at = now
             state = "DEGRADED"
