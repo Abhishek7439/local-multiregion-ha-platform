@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-BASE_REPO = Path("/home/cloud_automator/setu-starter")
+BASE_REPO = Path(__file__).resolve().parent.parent
 BARE_REMOTE = Path("/tmp/setu-demo-remote.git")
 WORKTREE_DIR = Path("/tmp/setu-demo-wt")
 STAGE_DIR = Path("/tmp/setu-demo-staging")

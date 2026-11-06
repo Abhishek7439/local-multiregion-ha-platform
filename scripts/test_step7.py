@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-BASE_REPO = Path("/home/cloud_automator/setu-starter")
+BASE_REPO = Path(__file__).resolve().parent.parent
 MC = str(BASE_REPO / "scripts" / "mc.sh")
 MC_CONFIG_DIR = Path(os.environ.get("HOME", "/home/cloud_automator")) / ".setu-mc"
 

@@ -2,7 +2,8 @@
 set -u
 echo "whoami=$(whoami) home=$HOME"
 ls -l /var/run/docker.sock /usr/bin/docker 2>&1 | head
-cd /home/cloud_automator/setu-starter
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
 /usr/bin/docker compose up -d gateway
 sleep 2
 echo "=== ps ==="

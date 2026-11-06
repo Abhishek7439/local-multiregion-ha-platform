@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-BASE_REPO = Path("/home/cloud_automator/setu-starter")
+BASE_REPO = Path(__file__).resolve().parent.parent
 PROJECT = "setu-multiregion"
 
 
