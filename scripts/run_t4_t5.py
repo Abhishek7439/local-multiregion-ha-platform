@@ -102,7 +102,7 @@ def setup_environment():
 
     run(["git", "clone", str(BASE_REPO), str(STAGE_DIR)])
     run(["git", "config", "user.name", "Abhishek7439"], cwd=STAGE_DIR)
-    run(["git", "config", "user.email", run(["git", "config", "user.email"], cwd=BASE_REPO).stdout.strip() or "cloud_automator@localhost"], cwd=STAGE_DIR)
+    run(["git", "config", "user.email", run(["git", "config", "user.email"], cwd=BASE_REPO, check=False).stdout.strip() or "cloud_automator@localhost"], cwd=STAGE_DIR)
     if (BASE_REPO / ".env").exists():
         shutil.copy(BASE_REPO / ".env", STAGE_DIR / ".env")
 

@@ -81,8 +81,8 @@ def main():
             shutil.rmtree(d, ignore_errors=True)
 
     # Get local git identity dynamically
-    author_name = run(["git", "config", "user.name"], cwd=BASE_REPO).stdout.strip() or "Abhishek7439"
-    author_email = run(["git", "config", "user.email"], cwd=BASE_REPO).stdout.strip() or "cloud_automator@localhost"
+    author_name = run(["git", "config", "user.name"], cwd=BASE_REPO, check=False).stdout.strip() or "Abhishek7439"
+    author_email = run(["git", "config", "user.email"], cwd=BASE_REPO, check=False).stdout.strip() or "cloud_automator@localhost"
 
     # 2. Initialize bare remote and staging clone
     print("Creating temporary bare remote and deployment worktree...")
