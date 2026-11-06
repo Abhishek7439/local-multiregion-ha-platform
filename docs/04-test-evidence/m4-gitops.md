@@ -160,3 +160,29 @@ Replaced per-object sequential `mc cat` invocations with `mc ls --recursive --js
 - AT3: Automated failover & fencing to `MAINT` with RTO measured: **3715 ms**.
 - AT4: Fast integrity failback: checksum verified across 113 objects and failback completed in **10 seconds**.
 - RPO: Measured under graceful stop (0 missing) and SIGKILL (0 missing) sequential streams.
+
+
+---
+
+## 6. Portability Rehearsals: Clean Clone & True First-Run
+
+### A. Clean Clone on Dev Host (Images and Volumes Cached)
+- **Directory**: /tmp/clean (cloned from local repository).
+- **Environment**: Reused existing Docker daemon image cache (minio, haproxy, mc, curl) and existing named volumes (setu-multiregion_minio_a_data, setu-multiregion_minio_b_data).
+- **Prerequisites (make doctor)**: Passed (0 failures, 1 optional warning for socat).
+- **Execution (make demo)**: Completed end-to-end in **1m 43s** with zero human intervention.
+- **Portability fixes verified**:
+  1. Dynamic repo root via BASE_REPO = Path(__file__).resolve().parent.parent (no hardcoded /home/cloud_automator/setu-starter).
+  2. Resilient git config queries (check=False) so fresh clones without global git identity do not raise RuntimeError.
+  3. Automatic ~/.setu-mc directory initialization in scripts/mc.sh.
+
+### B. True First-Run Test with Fresh Volumes (COMPOSE_PROJECT_NAME=fresh_test)
+- **Directory**: /tmp/throwaway-test
+- **Volume isolation**: Overrode project name to resh_test, creating fresh empty volumes (resh_test_minio_a_data, resh_test_minio_b_data) without touching setu-multiregion volumes.
+- **Image pull time**: 0.0s (all 4 container digests cached in local Docker Engine; ~120MB total on cold pull).
+- **Observed Failures on Fresh Volumes**:
+  1. **Site replication unconfigured**: MinIO fresh instances do not replicate out of the box; SiteReplication is not enabled.
+  2. **Missing demo bucket**: Fresh storage volumes contain zero buckets; demo.sh Step 2 failed immediately with Bucket demo does not exist.
+  3. **Reconciler project name mismatch**: 
+econciler.py defaulted to setu-multiregion, attempting to start setu-multiregion-gateway-1 while resh_test-gateway-1 already held port 8080 (port is already allocated), causing Step 10 TimeoutError.
+  4. **Network name collision**: docker-compose.yml hardcodes network names setu_global, setu_region_a, setu_region_b, triggering compose ownership warnings.
