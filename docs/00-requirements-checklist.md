@@ -10,7 +10,7 @@ provide high availability, automated disaster recovery, continuous deployment
 | 2 | Data replication A <-> B | MinIO site replication, verified | [x] |
 | 3 | High availability | Gateway serves from B when A is down | [x] |
 | 4 | Automated DR | Monitor detects failure, acts without me; RTO/RPO measured | [x] |
-| 5 | GitOps / continuous deployment | git push -> reconciler applies change automatically | [ ] |
+| 5 | GitOps / continuous deployment | Continuous pull reconciler, active health gate, auto-rollback on bad change, drift report-only (AT5 proven) | [x] |
 | 6 | Chaos engineering | Scripted experiments: hypothesis, injection, result | [ ] |
 | 7 | Production-style | Logs, runbook, tests, clean repo | [ ] |
 | 8 | Documentation | Architecture, decisions, test evidence | [ ] |

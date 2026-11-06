@@ -1,4 +1,4 @@
-.PHONY: help doctor up down restart ps logs health controller rpo demo
+.PHONY: help doctor up down restart ps logs health controller rpo audit gitops-demo demo
 
 SHELL := /bin/bash
 
@@ -12,6 +12,8 @@ help:
 	@echo "  make health      - Check health endpoints of all regions and gateway"
 	@echo "  make controller  - Run the DR controller state machine"
 	@echo "  make rpo         - Run independent RPO measurement"
+	@echo "  make audit       - Run deep periodic integrity audit (all objects SHA-256)"
+	@echo "  make gitops-demo - Run standalone GitOps self-healing & auto-rollback demo"
 	@echo "  make demo        - Execute full end-to-end self-healing demo (<10 min)"
 
 doctor:
@@ -40,6 +42,13 @@ controller:
 
 rpo:
 	@python3 controller/proof.py
+
+audit:
+	@python3 controller/proof.py compare --deep
+
+gitops-demo:
+	@chmod +x scripts/demo-gitops.sh
+	@./scripts/demo-gitops.sh
 
 demo:
 	@chmod +x scripts/demo.sh

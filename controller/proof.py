@@ -1,6 +1,21 @@
 """Checksums, RPO, and the HAProxy admin commands.
 
 The controller imports this file. No third-party packages.
+
+ETag trust assumption (documented in D7):
+In S3/MinIO, single-part uploads produce a plain hex MD5 with no suffix.
+The "-N" suffix indicates a multipart upload where N is the number of parts.
+Because `mc pipe` streams without knowing total length upfront, it uploads
+via the S3 multipart API, producing an ETag ending in "-1".
+
+Matching size and ETag is strong evidence of identical content, not proof.
+Different part sizes (or single-part vs multipart) can produce different
+ETags for identical bytes; `compare_sites()` handles this by falling back
+to SHA-256 to confirm whether content matches.
+
+Crucially, the fast path does NOT detect silent corruption (bit rot) of
+stored data if metadata on disk is unchanged. Full periodic integrity audits
+must use `make audit` (`compare_sites --deep`), which hashes every object.
 """
 
 import hashlib
@@ -60,6 +75,25 @@ def list_objects(alias):
     return names
 
 
+def list_objects_meta(alias):
+    """Return {key: (size, etag)} for every file under an mc alias.
+
+    Uses a single `mc ls --recursive --json` call -- one Docker container
+    invocation regardless of object count.
+    """
+    completed = run_mc(["ls", "--recursive", "--json", alias])
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.decode(errors="replace")[-400:])
+    meta = {}
+    for line in completed.stdout.splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        if item.get("type") == "file" and item.get("key"):
+            meta[item["key"]] = (item.get("size", -1), item.get("etag", ""))
+    return meta
+
+
 def sha256_of(alias, key):
     """SHA-256 of one object. None if the read fails."""
     completed = run_mc(["cat", f"{alias}/{key}"])
@@ -68,25 +102,67 @@ def sha256_of(alias, key):
     return hashlib.sha256(completed.stdout).hexdigest()
 
 
-def compare_sites():
-    """Compare every object on site-a with the same key on site-b."""
-    keys_a = list_objects("site-a")
-    keys_b = list_objects("site-b")
-    hashes_a = {key: sha256_of("site-a", key) for key in keys_a}
-    hashes_b = {key: sha256_of("site-b", key) for key in keys_b}
-    only_a = sorted(set(hashes_a) - set(hashes_b))
-    only_b = sorted(set(hashes_b) - set(hashes_a))
-    different = sorted(
-        key for key in set(hashes_a) & set(hashes_b)
-        if hashes_a[key] != hashes_b[key]
-    )
+def compare_sites(deep=False):
+    """Compare every object on site-a with the same key on site-b.
+
+    Fast path (default, deep=False):
+      1. List both sites with `mc ls --recursive --json` (2 containers).
+      2. Compare key sets. Keys only on one side -> mismatch.
+      3. For shared keys: if size and ETag match -> identical, skip SHA-256.
+      4. If size or ETag differ -> fall back to SHA-256 on both sides.
+         If SHA-256 matches, treat as match (ETag difference was cosmetic).
+         If SHA-256 differs, record in `different`.
+
+    Deep path (deep=True):
+      SHA-256 every object on both sides regardless of ETag. Slower but
+      guarantees byte-level verification to catch silent storage corruption.
+
+    Fail safe: any mismatch (only_a, only_b, different) -> match=False,
+    which blocks failback in the controller.
+    """
+    meta_a = list_objects_meta("site-a")
+    meta_b = list_objects_meta("site-b")
+
+    keys_a = set(meta_a)
+    keys_b = set(meta_b)
+    only_a = sorted(keys_a - keys_b)
+    only_b = sorted(keys_b - keys_a)
+    shared = sorted(keys_a & keys_b)
+
+    different = []
+    sha256_checked = 0
+
+    if deep:
+        # Full SHA-256 on every shared key
+        for key in shared:
+            ha = sha256_of("site-a", key)
+            hb = sha256_of("site-b", key)
+            sha256_checked += 1
+            if ha != hb:
+                different.append(key)
+    else:
+        # Fast path: only SHA-256 on metadata mismatches
+        for key in shared:
+            size_a, etag_a = meta_a[key]
+            size_b, etag_b = meta_b[key]
+            if size_a == size_b and etag_a == etag_b:
+                continue  # identical by metadata
+            # Metadata mismatch -> verify with SHA-256
+            ha = sha256_of("site-a", key)
+            hb = sha256_of("site-b", key)
+            sha256_checked += 1
+            if ha != hb:
+                different.append(key)
+
     return {
         "match": not only_a and not only_b and not different,
-        "count_a": len(hashes_a),
-        "count_b": len(hashes_b),
+        "count_a": len(meta_a),
+        "count_b": len(meta_b),
         "only_a": only_a,
         "only_b": only_b,
         "different": different,
+        "sha256_checked": sha256_checked,
+        "mode": "deep" if deep else "fast",
     }
 
 
@@ -164,23 +240,28 @@ def measure_rpo(stop_after=12, max_writes=30, kill=False, tag=None):
 
 
 if __name__ == "__main__":
-    results = {}
-    run_all = len(sys.argv) == 1 or "--both" in sys.argv
-    run_kill = "--kill" in sys.argv or run_all
-    run_graceful = "--graceful" in sys.argv or run_all
+    if "compare" in sys.argv or "--compare" in sys.argv:
+        deep = "--deep" in sys.argv
+        res = compare_sites(deep=deep)
+        print(json.dumps(res, indent=2))
+    else:
+        results = {}
+        run_all = len(sys.argv) == 1 or "--both" in sys.argv
+        run_kill = "--kill" in sys.argv or run_all
+        run_graceful = "--graceful" in sys.argv or run_all
 
-    try:
-        if run_graceful:
-            res_graceful = measure_rpo(kill=False)
-            results["graceful_stop"] = res_graceful
+        try:
+            if run_graceful:
+                res_graceful = measure_rpo(kill=False)
+                results["graceful_stop"] = res_graceful
+                subprocess.run([docker_bin(), "compose", "start", "minio-a"], cwd=ROOT, check=False)
+                wait_for_a()
+
+            if run_kill:
+                res_kill = measure_rpo(kill=True)
+                results["kill"] = res_kill
+        finally:
             subprocess.run([docker_bin(), "compose", "start", "minio-a"], cwd=ROOT, check=False)
             wait_for_a()
 
-        if run_kill:
-            res_kill = measure_rpo(kill=True)
-            results["kill"] = res_kill
-    finally:
-        subprocess.run([docker_bin(), "compose", "start", "minio-a"], cwd=ROOT, check=False)
-        wait_for_a()
-
-    print(json.dumps(results if len(results) > 1 else list(results.values())[0], indent=2))
+        print(json.dumps(results if len(results) > 1 else list(results.values())[0], indent=2))
