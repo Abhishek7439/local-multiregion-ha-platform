@@ -54,7 +54,7 @@ Resolved items (fixed in M4):
      - **Periodic Audit (`make audit` / `--deep`)**: Full SHA-256 verification across every object (`make audit`) reads the raw payload from storage to detect silent data corruption.
 
 Known limits:
-1. **Delete marker during outage**: A delete during an outage can hold failback. If an object is deleted on the active site while replication is disconnected, a delete marker is placed on only one site. compare_sites() detects this asymmetry (listing counts differ or an object appears only on one site) and holds failback until replication syncs the delete marker across sites or until manual resolution.
+1. **Delete marker during outage**: Temporary mismatch while replication is down; failback held until replication resumes or an operator resolves it. If an object is deleted on the active site while replication is disconnected, a delete marker is placed on only one site. compare_sites() detects this asymmetry (listing counts differ or an object appears only on one site) and holds failback until replication resumes or an operator resolves it.
 2. **RPO under burst load (scheduled for M5 chaos)**: Untested under concurrent high-throughput write streams; asynchronous replication lag will be stressed during network latency and partition chaos tests.
 
 ## D8 - Fencing mechanism and admin socket security
