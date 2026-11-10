@@ -5,3 +5,7 @@ __pycache__/
 *.zip
 *.mp4
 SETU_SWFW_5S_02_Submission/
+
+*.msi
+PROJECT_CONTEXT.md
+/SETU_SWFW_5S_02_Project_Report.pdf
