@@ -2,7 +2,7 @@
 
 **Candidate**: Abhishek Kothe (`Abhishek7439`)  
 **Project**: SETU SWFW_5S_02: Local Multi-Region Highly Available Data Platform  
-**Target Review**: Zoho Campus Offline Review, November 2026  
+**Academic Term**: 5th Semester, November 2026  
 
 ---
 

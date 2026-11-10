@@ -3,7 +3,7 @@
 
 **Course Project**: SETU SWFW_5S_02  
 **Author**: Abhishek Kothe ([@Abhishek7439](https://github.com/Abhishek7439))  
-**Academic Target**: YCCE Nagpur / Zoho Campus Offline Review (November 2026)  
+**Academic Term**: 5th Semester (November 2026) | **Institution**: YCCE Nagpur | **Course Track**: SETU 2026–27 (SWFW_5S_02)  
 **Submission Package**: Comprehensive 18-page technical report in [`report/SETU_SWFW_5S_02_Project_Report.pdf`](report/SETU_SWFW_5S_02_Project_Report.pdf)
 
 ---

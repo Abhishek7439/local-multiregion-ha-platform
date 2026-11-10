@@ -51,7 +51,7 @@ Student Name:       Abhishek Kothe (GitHub: @Abhishek7439)
 College:            Yeshwantrao Chavan College of Engineering (YCCE), Nagpur
 Department:         Department of Computer Technology
 Course / Project:   SETU 2026-27 | Project SWFW_5S_02
-Review Target:      Zoho Campus Offline Review (November 2026)
+Academic Term:      5th Semester
 Tested Environment: Ubuntu 26.04.1 LTS on WSL2 (Windows 11 host, 16 GB RAM)
 External Testing:   Clean-machine test on a separate machine: not yet tested on a separate machine
 ================================================================================
@@ -83,7 +83,7 @@ PACKAGE CONTENTS
    - DEMO_SCRIPT.md: Complete narration guide, terminal actions, and recording checklist
    - demo-run.log: Real execution log of make demo concluding with exit code 0
    - README.md: Demonstration overview and review evaluation protocol
-   (Demonstration Note: Live demonstration will be conducted in person at the review)
+   (Demonstration Note: Live demonstration will be conducted in person during project evaluation)
 
 5-LINE OPERATOR QUICK-START
 ---------------------------

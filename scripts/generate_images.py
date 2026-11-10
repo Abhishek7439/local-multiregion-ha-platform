@@ -535,3 +535,4 @@ chart_html = """<!DOCTYPE html>
 render_html_to_png(chart_html, os.path.join(output_dir, "13_chart_rto_e1_e2.png"), width=950, height=450)
 
 print("=== ALL 13 IMAGES SUCCESSFULLY GENERATED IN docs/images/ ===")
+

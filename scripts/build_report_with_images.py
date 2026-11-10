@@ -312,12 +312,12 @@ html_content = f"""<!DOCTYPE html>
         <span>YCCE Nagpur (Computer Technology)</span>
       </div>
       <div class="cover-meta-item">
-        <strong>Semester / Period</strong>
-        <span>5th Semester (Winter 2026 Review)</span>
+        <strong>Academic Term</strong>
+        <span>5th Semester</span>
       </div>
       <div class="cover-meta-item">
-        <strong>Review Target</strong>
-        <span>Zoho Campus Offline Review (November 2026)</span>
+        <strong>Course Track</strong>
+        <span>SETU 2026–27 (SWFW_5S_02)</span>
       </div>
       <div class="cover-meta-item">
         <strong>Submission Date</strong>
@@ -331,7 +331,7 @@ html_content = f"""<!DOCTYPE html>
   </div>
 
   <div style="border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
-    <span>Demonstration Status: Recorded execution in <code>demo/demo-run.log</code> | Live evaluation at Zoho Review</span>
+    <span>Demonstration Status: Recorded execution in <code>demo/demo-run.log</code> | Live evaluation available</span>
     <span>Host Environment: Ubuntu 26.04.1 LTS on WSL2</span>
   </div>
 </div>
@@ -886,10 +886,10 @@ Both "regions" execute as Docker containers on a single host Linux kernel. Inter
   <li><strong>Prometheus & OpenTelemetry Observability:</strong> Integrating Prometheus metrics scraping and Grafana dashboards for real-time visualization of replication lag, HAProxy queue depth, and failover latency.</li>
 </ul>
 
-<h2>Demonstration Materials & Live Review Protocol</h2>
+<h2>Demonstration Materials & Live Evaluation Protocol</h2>
 <div class="callout">
   <strong>Live Demonstration Notice:</strong><br>
-  Live demonstration will be given at the Zoho Campus Offline Review (November 2026).<br>
+  Live demonstration will be conducted during project evaluation.<br>
   A recorded terminal run of <code>make demo</code> (concluding with exit code 0) is included directly in the submission package as <code>demo/demo-run.log</code>.
 </div>
 
@@ -1087,3 +1087,4 @@ if len(placeholders) > 0:
     sys.exit(1)
 
 print("=== PDF REPORT BUILD SUCCESS: In range (12-18 pages), zero placeholders, real inline images! ===")
+

@@ -2,7 +2,7 @@
 ## Course Project: SWFW_5S_02 — Local Multi-Region Highly Available Data Platform with Automated Disaster Recovery, Chaos Engineering, and GitOps
 **Student Name**: Abhishek Kothe  
 **GitHub Account**: `Abhishek7439`  
-**Review Target**: Zoho Campus Offline Review (November 2026)  
+**Academic Term**: 5th Semester (November 2026)  
 **Repository**: `https://github.com/Abhishek7439/setu-starter.git`  
 
 ---
