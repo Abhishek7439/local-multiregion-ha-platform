@@ -40,7 +40,9 @@ check_cmd "Curl" "curl --version" "true"
 
 # 3. Optional utilities
 check_cmd "Socat (admin CLI)" "socat -V" "false"
-check_cmd "Traffic Control (tc)" "tc -V" "false"
+# Note: 'tc -V' only verifies the host CLI binary is installed. Actual kernel qdisc
+# manipulation requires CAP_NET_ADMIN. Toxiproxy is used in M5 for unprivileged network chaos.
+check_cmd "tc binary (host CLI)" "tc -V" "false"
 
 # 4. Memory check
 printf "Checking %-18s ... " "System Memory"

@@ -87,3 +87,18 @@ Design decisions:
 6. **Worktree & Bind-Mount Isolation**:
    The reconciler executes in a dedicated git worktree (`/tmp/setu-gitops-wt`) so that polling, checking out candidate commits, and rollbacks never modify the developer's working directory (`~/setu-starter` remains clean on `main`).
    Docker Desktop bind mounts retain inode bindings to the worktree path; worktree resets must use `git clean -fd` / `git reset --hard` rather than directory deletion while containers are running.
+
+## D10 - Authenticated S3 Client Implementation (AWS SigV4 Standard Library)
+Options: Install `boto3`/`botocore`, configure anonymous bucket policies (`mc anonymous set ...`), or implement AWS Signature Version 4 HMAC-SHA256 in Python standard library.
+Choice: Pure standard library SigV4 implementation in `chaos/common.py` (`hashlib`, `hmac`, `urllib`).
+Reason: The course platform imposes a strict zero-third-party-package requirement. Installing `boto3` introduces hundreds of megabytes of external wheels. Making test buckets anonymous violates production security standards and leaves security holes. The custom SigV4 signer produces compliant AWS `Authorization` headers dynamically using credentials from `.env`, keeping the entire chaos generator portable and self-contained.
+
+## D11 - Network Fault Injection Tool (Toxiproxy vs Traffic Control)
+Options: Host Linux Traffic Control (`tc netem`), container sidecar with `CAP_NET_ADMIN`, or Toxiproxy v2.9.0.
+Choice: Toxiproxy v2.9.0 deployed as a service on the `setu_global` network, bound to port 9002 (replication path) and port 8474 (REST API).
+Reason: Host `tc` requires root and `CAP_NET_ADMIN`, which failed in unprivileged WSL2 (`RTNETLINK answers: Operation not permitted`). A sidecar container with `CAP_NET_ADMIN` works in WSL2, but affects ALL container traffic indiscriminately (including health checks and gateway client traffic). Toxiproxy operates entirely in user-space, sits surgically only on the `site-a` -> `site-b` replication link, provides directional control (`upstream` vs `downstream`), and exposes an intuitive JSON REST API that the student can easily explain during review. Proven in throwaway trial with full round-trip rollback before being added to `docker-compose.yml`.
+
+## D12 - Empirical Tuning of Experiment E3 WAN Latency and Bandwidth Thresholds
+Options: Keep arbitrary exploratory thresholds (100ms / 512KB/s) or tune parameters to physical distributed systems realities.
+Choice: Tuned E3 WAN latency to 500ms and bandwidth constraint to 32 KB/s with 20 KB non-compressible payloads (`os.urandom`).
+Reason: In exploratory runs with 100ms latency and 4KB objects, MinIO's concurrent replication workers and TCP buffering completed transfers in ~0.65s, masking the injected degradation against baseline (~0.53s). Increasing latency to 500ms (representative of high-latency cross-continental WAN links) and throttling bandwidth to 32 KB/s with non-compressible binary payloads produced distinct, repeatable replication lag (3.05s and 2.39s vs 0.73s baseline) while confirming 100% data consistency. Hypotheses were updated so every assertion evaluates real empirical behavior rather than pre-assumed numbers.
