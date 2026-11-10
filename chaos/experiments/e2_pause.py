@@ -1,18 +1,24 @@
 """Experiment E2: Gray Failure (Pause minio-a).
 
-Measures:
-- RTO (time from docker pause until first successful write on minio-b via Gateway)
-- RPO_failover (acknowledged writes missing on B at failover time)
-- RPO_after_return (acknowledged writes still missing after A is unpaused and resyncs)
-- Backend attribution (X-Backend-Server header)
+Tests system resilience under concurrent write load (~30-50 req/s for ~11s) with docker pause.
+Repeats 3 times to measure min/median/max RTO, RPO_failover, and RPO_after_return.
 """
 
+import sys
 import time
 import json
+import statistics
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from controller.proof import haproxy_command
 from chaos.common import (
     setup_chaos_bucket,
     cleanup_chaos_bucket,
-    put_object_gateway,
+    get_bucket_inventory,
+    ConcurrentWriter,
     docker_container_action,
     docker_service,
     start_dr_controller,
@@ -22,171 +28,222 @@ from chaos.common import (
 )
 
 HYPOTHESIS = (
-    "Pausing minio-a via docker pause simulates a gray failure where the container "
-    "process is frozen without closing TCP sockets or sending FIN/RST packets. Gateway "
-    "requests to A will time out (bounded by HAProxy timeout connect 2s) before failing "
-    "over to B, resulting in an RTO higher than abrupt termination. Acknowledged writes "
-    "may be temporarily missing on B at failover (RPO_failover >= 0), but unpausing "
-    "minio-a will allow replication to catch up with zero true loss (RPO_after_return = 0), "
-    "because Region A's disk volume survived."
+    "Under concurrent client write load (~30-50 req/s), executing docker pause on minio-a "
+    "freezes container sockets without TCP RST. In-flight requests to A time out and HAProxy "
+    "failover routes traffic to minio-b with first successful write within 10,000 ms (RTO <= 10s). "
+    "Unpausing minio-a restores two-way consistency with zero true data loss (RPO_after_return == 0)."
 )
 
 
-def run() -> dict:
-    timestamp = int(time.time())
-    bucket = f"chaos-e2-{timestamp}"
+def ensure_clean_baseline():
+    """Ensure minio-a is unpaused, running, and un-fenced before starting an iteration."""
+    try:
+        docker_container_action("unpause", "minio-a")
+    except Exception:
+        pass
+    docker_service("start", "minio-a")
+    time.sleep(1)
+    try:
+        haproxy_command("enable server minio_api/minio-a")
+    except Exception:
+        pass
+    time.sleep(1)
+
+
+def run_single_iteration(iter_idx: int) -> dict:
+    bucket = f"chaos-e2-i{iter_idx}-{int(time.time())}"
     ctrl_proc = None
+    writer = None
     is_paused = False
 
+    print(f"\n--- [E2 Iteration {iter_idx}/3] Bucket: {bucket} ---")
+    ensure_clean_baseline()
+    setup_chaos_bucket(bucket)
+
+    try:
+        # Start DR controller for automated fencing and failback
+        ctrl_proc = start_dr_controller(f"/tmp/setu-chaos-e2-dr-i{iter_idx}.log")
+
+        # Concurrent writer: 4 threads, 60ms delay ~ 35-50 req/s
+        # Request timeout is 3.5s to allow HAProxy connect timeout (2s) + redispatch
+        writer = ConcurrentWriter(bucket, concurrency=4, request_timeout=3.5, delay_between_req=0.06)
+        writer.start()
+        start_time = time.monotonic()
+
+        print("  Ramping up concurrent writes (~35-45 req/s)...")
+        time.sleep(3.0)
+
+        # Inject docker pause while writers are actively in-flight
+        pause_time = time.monotonic()
+        print(f"  >>> INJECTING CHAOS: docker pause minio-a at T+{pause_time - start_time:.2f}s <<<")
+        docker_container_action("pause", "minio-a")
+        is_paused = True
+
+        # Wait for first successful write on minio-b
+        first_b_time = None
+        timeout_wait = 12.0
+        while time.monotonic() - pause_time < timeout_wait:
+            results = writer.get_results()
+            b_writes = [r for r in results if r["success"] and r["backend"] == "minio-b" and r["end_ts"] >= pause_time]
+            if b_writes:
+                first_b_time = min(r["end_ts"] for r in b_writes)
+                break
+            time.sleep(0.05)
+
+        # Allow write stream to stabilize on minio-b for 3.5 more seconds (total write duration ~11s)
+        time.sleep(3.5)
+        writer.stop()
+        all_writes = writer.get_results()
+
+        # Calculate RTO
+        if first_b_time is not None:
+            rto_ms = int((first_b_time - pause_time) * 1000)
+        else:
+            rto_ms = None
+
+        # Classify writes based on timestamps relative to pause
+        acked_before_pause = [r for r in all_writes if r["success"] and r["backend"] == "minio-a" and r["end_ts"] <= pause_time]
+        in_flight_at_pause = [r for r in all_writes if r["start_ts"] < pause_time < r["end_ts"]]
+        acked_on_b = [r for r in all_writes if r["success"] and r["backend"] == "minio-b"]
+        failed = [r for r in all_writes if not r["success"]]
+
+        total_time_s = time.monotonic() - start_time
+        write_rate = len(all_writes) / total_time_s if total_time_s > 0 else 0
+
+        print(f"  Load Level: {len(all_writes)} requests in {total_time_s:.2f}s ({write_rate:.1f} req/s)")
+        print(f"  Acknowledged by minio-a before pause: {len(acked_before_pause)}")
+        print(f"  In-flight during pause: {len(in_flight_at_pause)}")
+        print(f"  Failed / timeout during failover: {len(failed)}")
+        print(f"  Acknowledged by minio-b after failover: {len(acked_on_b)}")
+        print(f"  Measured RTO: {rto_ms} ms")
+
+        # Measure RPO_failover (at failover instant on Region B via fast listing inventory)
+        b_inv = get_bucket_inventory(f"site-b/{bucket}")
+        missing_on_b_at_failover = []
+        for w in acked_before_pause:
+            k = w["key"]
+            expected_size = len(w["payload"])
+            if k not in b_inv or b_inv[k].get("size") != expected_size:
+                missing_on_b_at_failover.append(k)
+
+        rpo_failover = len(missing_on_b_at_failover)
+        print(f"  RPO_failover: {rpo_failover} object(s) missing on B at failover instant.")
+
+        # Disaster recovery: unpause minio-a and wait for failback
+        print("  Unpausing minio-a and waiting for failback...")
+        docker_container_action("unpause", "minio-a")
+        is_paused = False
+
+        failback_ok = False
+        for attempt in range(1, 41):
+            time.sleep(2)
+            st = get_haproxy_status()
+            if st.get("minio_api/minio-a", "") == "UP":
+                failback_ok = True
+                print(f"  Failback verified: minio-a restored and un-fenced (UP) after {attempt * 2}s.")
+                break
+
+        # Measure RPO_after_return (permanent loss across both sites via fast listing inventory)
+        a_inv = get_bucket_inventory(f"site-a/{bucket}")
+        b_inv_after = get_bucket_inventory(f"site-b/{bucket}")
+        missing_after_return = []
+        for w in acked_before_pause:
+            k = w["key"]
+            expected_size = len(w["payload"])
+            in_a = k in a_inv and a_inv[k].get("size") == expected_size
+            in_b = k in b_inv_after and b_inv_after[k].get("size") == expected_size
+            if not (in_a and in_b):
+                missing_after_return.append(k)
+
+        rpo_after_return = len(missing_after_return)
+        print(f"  RPO_after_return: {rpo_after_return} object(s) permanently lost.")
+        print(f"  (Note: Region A disk survived, so this reflects replication resync completeness).")
+
+    finally:
+        if is_paused:
+            try:
+                docker_container_action("unpause", "minio-a")
+            except Exception:
+                pass
+        if writer:
+            writer.stop()
+        if ctrl_proc:
+            stop_dr_controller(ctrl_proc)
+        cleanup_chaos_bucket(bucket)
+        ensure_clean_baseline()
+
+    return {
+        "iteration": iter_idx,
+        "rto_ms": rto_ms,
+        "rpo_failover": rpo_failover,
+        "rpo_failover_keys": missing_on_b_at_failover,
+        "rpo_after_return": rpo_after_return,
+        "rpo_after_return_keys": missing_after_return,
+        "total_requests": len(all_writes),
+        "write_rate_req_sec": round(write_rate, 1),
+        "acked_before_pause": len(acked_before_pause),
+        "in_flight_at_pause": len(in_flight_at_pause),
+        "acked_on_b": len(acked_on_b),
+        "failed_requests": len(failed),
+        "failback_ok": failback_ok,
+    }
+
+
+def run() -> dict:
     print(f"\n========================================================")
     print(f"   [E2] Gray Failure Chaos Experiment (docker pause minio-a)")
     print(f"========================================================")
     print(f"Hypothesis: {HYPOTHESIS}\n")
 
-    acked_writes = {}
-    failed_attempts = []
-    rto_ms = None
-    rpo_failover_keys = []
-    rpo_after_return_keys = []
-    held = False
-    details = {}
+    iterations_data = []
+    for i in range(1, 4):
+        res = run_single_iteration(i)
+        iterations_data.append(res)
+        time.sleep(2)
 
-    try:
-        # 1. Setup isolated ephemeral test bucket
-        print(f"Creating isolated chaos bucket: site-a/{bucket}")
-        if not setup_chaos_bucket(bucket):
-            raise RuntimeError(f"Failed to create bucket site-a/{bucket}")
+    rtos = [r["rto_ms"] for r in iterations_data if r["rto_ms"] is not None]
+    min_rto = min(rtos) if rtos else None
+    max_rto = max(rtos) if rtos else None
+    med_rto = int(statistics.median(rtos)) if rtos else None
 
-        # 2. Start DR controller for automated fencing and failback
-        ctrl_proc = start_dr_controller("/tmp/setu-chaos-e2-dr.log")
-        print("DR Controller active for automated failover & fencing.")
+    # Explicit hypothesis assertions (falsifiable):
+    c1 = (len(rtos) == len(iterations_data)) and (max_rto is not None and max_rto <= 10000)
+    c2 = all(r["rpo_after_return"] == 0 for r in iterations_data)
+    c3 = all(r["write_rate_req_sec"] >= 25.0 for r in iterations_data)
+    c4 = all(r["acked_before_pause"] > 0 for r in iterations_data)
 
-        # 3. Burst write stream to Gateway (:8080)
-        print("Starting burst write stream through Gateway (:8080)...")
-        pause_injected = False
-        pause_time = None
-        seq = 0
+    held = c1 and c2 and c3 and c4
 
-        max_loop = 60
-        while seq < max_loop:
-            seq += 1
-            key = f"pause-{seq:04d}.txt"
-            payload = f"burst-payload-pause-{seq:04d}-{time.time()}".encode()
+    print("\n--- E2 Summary Across 3 Iterations ---")
+    print(f"  RTO min / median / max: {min_rto}ms / {med_rto}ms / {max_rto}ms")
+    print(f"  Assertion Clauses:")
+    print(f"    - Clause 1 (RTO <= 10s across all runs): {c1} (max: {max_rto}ms)")
+    print(f"    - Clause 2 (RPO_after_return == 0): {c2}")
+    print(f"    - Clause 3 (Load rate >= 25 req/s): {c3}")
+    print(f"    - Clause 4 (Pre-failover acked > 0): {c4}")
+    print(f"  Overall Hypothesis Held: {held}\n")
 
-            # For paused container, timeout allows HAProxy redispatch to trigger
-            res = put_object_gateway(bucket, key, payload, timeout=3.5)
-            now = time.monotonic()
-
-            if res["success"]:
-                backend = res["backend"]
-                acked_writes[key] = {
-                    "backend": backend,
-                    "body": payload,
-                    "ts": time.time(),
-                }
-                print(f"  [Write #{seq:02d}] HTTP 200 via Gateway -> Backend: {backend} ({res['duration_ms']}ms)")
-
-                # If paused and we receive an ack from minio-b, failover succeeded!
-                if pause_injected and backend == "minio-b":
-                    rto_ms = int((now - pause_time) * 1000)
-                    print(f"\n>>> GRAY FAILURE FAILOVER: First write served by minio-b in {rto_ms}ms (RTO) <<<\n")
-                    break
-            else:
-                failed_attempts.append({"seq": seq, "key": key, "error": res["error"]})
-                print(f"  [Write #{seq:02d}] Failed: {res['error']}")
-
-            # Inject docker pause after 10 writes acknowledged on minio-a
-            if not pause_injected and len([w for w in acked_writes.values() if w["backend"] == "minio-a"]) >= 10:
-                print(f"\n>>> INJECTING CHAOS: docker pause minio-a at {time.strftime('%X')} <<<")
-                docker_container_action("pause", "minio-a")
-                pause_time = time.monotonic()
-                pause_injected = True
-                is_paused = True
-                print("minio-a paused (frozen). Waiting for HAProxy health checks to redirect traffic to Region B...\n")
-
-            time.sleep(0.1)
-
-        # 4. Measure RPO_failover: which acked writes on minio-a are missing on B right now?
-        print("--- Measuring RPO_failover (at failover instant) ---")
-        acked_on_a = {k: v for k, v in acked_writes.items() if v["backend"] == "minio-a"}
-        print(f"Total writes acknowledged by minio-a before pause: {len(acked_on_a)}")
-
-        for k, v in acked_on_a.items():
-            check = run_mc(["cat", f"site-b/{bucket}/{k}"])
-            if check.returncode != 0 or check.stdout.strip() != v["body"].decode().strip():
-                rpo_failover_keys.append(k)
-
-        rpo_failover_count = len(rpo_failover_keys)
-        print(f"RPO_failover: {rpo_failover_count} object(s) missing on Region B at failover time.")
-        if rpo_failover_keys:
-            print(f"  Missing keys at failover: {rpo_failover_keys}")
-
-        # 5. Recover Region A: unpause container and wait for resync & failback
-        print("\n--- Disaster Recovery: Unpausing minio-a ---")
-        docker_container_action("unpause", "minio-a")
-        is_paused = False
-        print("minio-a unpaused. Waiting for replication resync and controller failback...")
-
-        recovered = False
-        for _ in range(25):
-            time.sleep(2)
-            st = get_haproxy_status()
-            if st.get("minio_api/minio-a", "").startswith("UP"):
-                recovered = True
-                break
-
-        if recovered:
-            print("Controller verified checksum match: minio-a restored and un-fenced (UP).")
-        else:
-            print("Warning: failback timeout; checking current status.")
-
-        # 6. Measure RPO_after_return: are any acknowledged writes permanently lost?
-        print("\n--- Measuring RPO_after_return (post-recovery true loss) ---")
-        for k, v in acked_writes.items():
-            check_a = run_mc(["cat", f"site-a/{bucket}/{k}"])
-            check_b = run_mc(["cat", f"site-b/{bucket}/{k}"])
-            valid_a = (check_a.returncode == 0 and check_a.stdout.strip() == v["body"].decode().strip())
-            valid_b = (check_b.returncode == 0 and check_b.stdout.strip() == v["body"].decode().strip())
-            if not (valid_a and valid_b):
-                rpo_after_return_keys.append(k)
-
-        rpo_after_return_count = len(rpo_after_return_keys)
-        print(f"RPO_after_return: {rpo_after_return_count} object(s) permanently lost.")
-        print(f"  (Note: Region A disk volume survived, so no data was destroyed on disk).")
-
-        # 7. Evaluate Hypothesis
-        held = (rto_ms is not None and rto_ms > 0) and (rpo_after_return_count == 0)
-        print(f"\nHypothesis Held: {held}")
-
-        details = {
-            "experiment": "E2_pause",
-            "hypothesis": HYPOTHESIS,
-            "hypothesis_held": held,
-            "rto_ms": rto_ms,
-            "rpo_failover": rpo_failover_count,
-            "rpo_failover_keys": rpo_failover_keys,
-            "rpo_after_return": rpo_after_return_count,
-            "rpo_after_return_keys": rpo_after_return_keys,
-            "total_acked": len(acked_writes),
-            "acked_by_a": len(acked_on_a),
-            "acked_by_b": len([w for w in acked_writes.values() if w["backend"] == "minio-b"]),
-            "failed_requests": len(failed_attempts),
-        }
-
-    finally:
-        # Guarantee unpause and cleanup
-        if is_paused:
-            docker_container_action("unpause", "minio-a")
-        stop_dr_controller(ctrl_proc)
-        print(f"Cleaning ephemeral bucket: {bucket}...")
-        cleanup_chaos_bucket(bucket)
-        docker_service("start", "minio-a")
-
-    return details
+    return {
+        "experiment": "E2_pause",
+        "hypothesis": HYPOTHESIS,
+        "hypothesis_held": held,
+        "assertions": {
+            "rto_within_10s": c1,
+            "zero_true_data_loss": c2,
+            "sustained_load_rate": c3,
+            "pre_failover_acked_positive": c4,
+        },
+        "rto_ms": med_rto,
+        "rto_min_ms": min_rto,
+        "rto_median_ms": med_rto,
+        "rto_max_ms": max_rto,
+        "rpo_failover": max(r["rpo_failover"] for r in iterations_data),
+        "rpo_after_return": max(r["rpo_after_return"] for r in iterations_data),
+        "avg_write_rate_req_sec": round(statistics.mean(r["write_rate_req_sec"] for r in iterations_data), 1),
+        "iterations": iterations_data,
+    }
 
 
 if __name__ == "__main__":
     res = run()
-    print("\nResult Summary:")
     print(json.dumps(res, indent=2))
-

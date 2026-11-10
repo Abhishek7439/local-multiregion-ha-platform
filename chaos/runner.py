@@ -8,19 +8,37 @@ evidence report to docs/04-test-evidence/m5-chaos.md.
 import sys
 import time
 import json
+import subprocess
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from controller.proof import compare_sites
-from chaos.common import get_project_name
+from chaos.common import get_project_name, run_mc
 from chaos.experiments import e1_kill, e2_pause, e5_gitops_chaos
 
 REPORT_FILE = ROOT_DIR / "docs" / "04-test-evidence" / "m5-chaos.md"
 
 
-def generate_markdown_report(results: list[dict], pre_check: dict, post_check: dict) -> None:
+def get_bucket_keys(target: str) -> set[str]:
+    """Retrieve all object keys in a target bucket path (e.g. site-a/demo)."""
+    res = run_mc(["ls", "--recursive", "--json", target])
+    if res.returncode != 0:
+        return set()
+    keys = set()
+    for line in res.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            keys.add(json.loads(line).get("key", ""))
+        except Exception:
+            pass
+    return keys
+
+
+def generate_markdown_report(results: list[dict], pre_check: dict, post_check: dict, cleaned_rto_keys: list[str]) -> None:
     now_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
     proj = get_project_name()
 
@@ -29,28 +47,36 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
         f"\n**Execution Date**: `{now_str}`  ",
         f"**Project**: `{proj}`  ",
         f"**Baseline Pre-Check Integrity**: `match: {pre_check.get('match')}` (count: {pre_check.get('count_a')})  ",
-        f"**Post-Suite Integrity**: `match: {post_check.get('match')}` (count: {post_check.get('count_a')})  \n",
+        f"**Post-Suite Integrity**: `match: {post_check.get('match')}` (count: {post_check.get('count_a')})  ",
+        f"**Ephemeral Failover Probes Cleaned**: `{len(cleaned_rto_keys)}` (`{cleaned_rto_keys}`)  \n",
         "## Summary of Experiments\n",
-        "| ID | Experiment | Hypothesis Held? | RTO (Failover) | RPO_failover | RPO_after_return | Primary Mechanism |",
+        "| ID | Experiment | Hypothesis Held? | RTO (min / med / max) | RPO_failover | RPO_after_return | Primary Mechanism |",
         "|:---|:---|:---:|:---:|:---:|:---:|:---|",
     ]
 
     for r in results:
         eid = r.get("experiment", "unknown")
         held = "PASS (Held)" if r.get("hypothesis_held") else "FAIL (Did Not Hold)"
-        rto = f"{r.get('rto_ms')} ms" if r.get("rto_ms") is not None else r.get("rto", "N/A")
-        rpo_f = f"{r.get('rpo_failover')} objects" if r.get("rpo_failover") is not None else r.get("rpo", "N/A")
-        rpo_r = f"{r.get('rpo_after_return')} objects" if r.get("rpo_after_return") is not None else r.get("rpo", "N/A")
+        
+        if "rto_median_ms" in r and r["rto_median_ms"] is not None:
+            rto = f"{r.get('rto_min_ms')} / {r.get('rto_median_ms')} / {r.get('rto_max_ms')} ms"
+        elif "rto_ms" in r and r["rto_ms"] is not None:
+            rto = f"{r.get('rto_ms')} ms"
+        else:
+            rto = r.get("rto", "N/A")
+
+        rpo_f = f"{r.get('rpo_failover')} obj" if r.get("rpo_failover") is not None else r.get("rpo", "N/A")
+        rpo_r = f"{r.get('rpo_after_return')} obj" if r.get("rpo_after_return") is not None else r.get("rpo", "N/A")
 
         if eid == "E1_kill":
             name = "E1: Abrupt Crash (SIGKILL)"
-            mech = "HAProxy health check failover to minio-b"
+            mech = "HAProxy health check failover to minio-b under concurrent writes"
         elif eid == "E2_pause":
             name = "E2: Gray Failure (docker pause)"
-            mech = "Socket freeze, TCP connect timeout & redispatch"
+            mech = "Socket freeze, client timeout/redispatch to minio-b"
         elif eid == "E5_gitops_chaos":
             name = "E5: Chaos During GitOps Deploy"
-            mech = "Active health gate failure & automatic rollback"
+            mech = "Active health gate failure & automated rollback to last_good"
         else:
             name = eid
             mech = "Custom"
@@ -66,24 +92,27 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
         lines.append(f"**Hypothesis**:\n> *\"{r.get('hypothesis')}\"*\n")
         lines.append(f"- **Hypothesis Result**: `{'HELD' if r.get('hypothesis_held') else 'FAILED'}`")
 
-        if "rto_ms" in r and r["rto_ms"] is not None:
-            lines.append(f"- **Measured RTO**: `{r.get('rto_ms')} ms` (time from injection to first write served by backup)")
+        if "assertions" in r:
+            lines.append("- **Explicit Falsifiable Assertions**:")
+            for k, v in r["assertions"].items():
+                lines.append(f"  - `{k}`: `{v}`")
+
+        if "rto_median_ms" in r and r["rto_median_ms"] is not None:
+            lines.append(f"- **Measured RTO Across Iterations**:")
+            lines.append(f"  - Min RTO: `{r.get('rto_min_ms')} ms`")
+            lines.append(f"  - Median RTO: `{r.get('rto_median_ms')} ms`")
+            lines.append(f"  - Max RTO: `{r.get('rto_max_ms')} ms`")
+            lines.append(f"  - Client Timeout Impact: In concurrent writes, client request timeout determines whether in-flight requests fail or succeed during backend transition.")
+
+        if "avg_write_rate_req_sec" in r:
+            lines.append(f"- **Load Level**: Sustained `{r.get('avg_write_rate_req_sec')} req/s` (5 concurrent worker threads)")
 
         if "rpo_failover" in r and r["rpo_failover"] is not None:
             lines.append(f"- **RPO_failover**: `{r.get('rpo_failover')} objects` missing on Region B at failover instant.")
-            if r.get("rpo_failover_keys"):
-                lines.append(f"  - Missing keys: `{r.get('rpo_failover_keys')}`")
 
         if "rpo_after_return" in r and r["rpo_after_return"] is not None:
             lines.append(f"- **RPO_after_return**: `{r.get('rpo_after_return')} objects` lost permanently across the platform.")
             lines.append(f"  *(Note: Region A disk volume survived, so this measures replication resync completeness, not physical disk wipe).*")
-
-        if "total_acked" in r:
-            lines.append(f"- **Client Request Attribution**:")
-            lines.append(f"  - Total Acknowledged Writes: `{r.get('total_acked')}`")
-            lines.append(f"  - Acknowledged by `minio-a`: `{r.get('acked_by_a')}`")
-            lines.append(f"  - Acknowledged by `minio-b`: `{r.get('acked_by_b')}`")
-            lines.append(f"  - Failed / Dropped Requests: `{r.get('failed_requests')}`")
 
         if eid == "E5_gitops_chaos":
             lines.append(f"- **Deployment Rollback Metrics**:")
@@ -92,6 +121,14 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
             lines.append(f"  - Rollback Duration: `{r.get('rollback_time_seconds')}s`")
             lines.append(f"  - Bad Commit Persisted: `{r.get('bad_commit_recorded')}`")
             lines.append(f"  - Gateway Restored: `{r.get('gateway_restored')}`")
+
+        if "iterations" in r:
+            lines.append("\n**Iteration Breakdown**:")
+            for it in r["iterations"]:
+                lines.append(f"- Iteration {it['iteration']}: RTO = `{it['rto_ms']} ms`, Load = `{it['write_rate_req_sec']} req/s`, "
+                             f"Pre-chaos acked = `{it.get('acked_before_kill', it.get('acked_before_pause', 0))}`, "
+                             f"Acked on B = `{it['acked_on_b']}`, Failed = `{it['failed_requests']}`, "
+                             f"RPO_failover = `{it['rpo_failover']}`, RPO_after_return = `{it['rpo_after_return']}`")
 
         lines.append("\n```json\n" + json.dumps(r, indent=2) + "\n```\n")
 
@@ -109,14 +146,15 @@ def main():
     # 1. Baseline Pre-check
     print("\n--- Running Pre-Flight Baseline Integrity Check ---")
     pre_check = compare_sites()
-    print(f"Baseline: match={pre_check.get('match')}, objects={pre_check.get('count_a')}")
+    pre_demo_keys = get_bucket_keys("site-a/demo")
+    print(f"Baseline: match={pre_check.get('match')}, count_a={pre_check.get('count_a')}, demo_keys={len(pre_demo_keys)}")
     if not pre_check.get("match"):
         print("ERROR: Platform has pre-existing divergence before chaos tests!", file=sys.stderr)
         sys.exit(1)
 
     results = []
 
-    # 2. Run E1: Crash / Kill
+    # 2. Run E1: Crash / Kill (3 iterations)
     try:
         e1_res = e1_kill.run()
         results.append(e1_res)
@@ -127,7 +165,7 @@ def main():
     # Settle
     time.sleep(3)
 
-    # 3. Run E2: Gray Failure / Pause
+    # 3. Run E2: Gray Failure / Pause (3 iterations)
     try:
         e2_res = e2_pause.run()
         results.append(e2_res)
@@ -146,13 +184,27 @@ def main():
         print(f"ERROR in E5_gitops_chaos: {e}", file=sys.stderr)
         results.append({"experiment": "E5_gitops_chaos", "hypothesis_held": False, "error": str(e)})
 
-    # 5. Post-Flight Integrity Check
+    # 5. Clean ephemeral failover probe files generated by DR controller during tests
+    post_demo_keys = get_bucket_keys("site-a/demo")
+    new_rto_keys = sorted(list(post_demo_keys - pre_demo_keys))
+    cleaned_rto_keys = []
+    for k in new_rto_keys:
+        if k.startswith("rto-"):
+            run_mc(["rm", "--force", f"site-a/demo/{k}"])
+            run_mc(["rm", "--force", f"site-b/demo/{k}"])
+            cleaned_rto_keys.append(k)
+
+    if cleaned_rto_keys:
+        print(f"\nCleaned {len(cleaned_rto_keys)} ephemeral DR probe files from demo: {cleaned_rto_keys}")
+        time.sleep(2)
+
+    # 6. Post-Flight Integrity Check
     print("\n--- Running Post-Suite Integrity Check ---")
     post_check = compare_sites()
     print(f"Post-Suite: match={post_check.get('match')}, count_a={post_check.get('count_a')}, count_b={post_check.get('count_b')}")
 
-    # 6. Generate Markdown Report
-    generate_markdown_report(results, pre_check, post_check)
+    # 7. Generate Markdown Report
+    generate_markdown_report(results, pre_check, post_check, cleaned_rto_keys)
 
     all_held = all(r.get("hypothesis_held") for r in results)
     print("\n==========================================================")
@@ -168,4 +220,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -1,20 +1,26 @@
 """Experiment E5: Chaos During GitOps Deployment.
 
 Injects failure mid-reconciliation:
-- Candidate commit is pushed to bare remote.
+- Candidate commit with valid config change is pushed to bare remote.
 - Reconciler starts applying candidate.
-- While the reconciler is evaluating its post-apply active health gate, gateway is killed.
+- While the reconciler is evaluating its post-apply active health gate, gateway container is killed.
 - Reconciler detects health gate timeout/failure.
 - Reconciler automatically rolls back stack to last_good.
+- Reconciler recreates gateway on last_good and verifies health gate passes.
 - Validates that state persistence records the commit in bad_commits and stack is restored to UP.
 """
 
 import os
+import sys
 import time
 import json
 import shutil
+import urllib.request
 import subprocess
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 from chaos.common import (
     ROOT_DIR,
@@ -38,6 +44,7 @@ def run() -> dict:
     bare_remote = Path(f"/tmp/setu-chaos-gitops-remote-{timestamp}.git")
     worktree_dir = Path(f"/tmp/setu-chaos-gitops-wt-{timestamp}")
     state_file = worktree_dir / ".gitops_state.json"
+    reconciler_log_path = Path(f"/tmp/setu-chaos-gitops-{timestamp}.log")
     reconciler_proc = None
 
     print(f"\n========================================================")
@@ -47,6 +54,7 @@ def run() -> dict:
 
     held = False
     details = {}
+    gw_killed = False
 
     try:
         # 1. Setup temporary bare remote and deployment worktree
@@ -81,7 +89,7 @@ def run() -> dict:
 
         # 2. Launch background reconciler
         project_name = get_project_name()
-        reconciler_log = open(f"/tmp/setu-chaos-gitops-{timestamp}.log", "w")
+        reconciler_log = open(reconciler_log_path, "w")
         reconciler_proc = subprocess.Popen(
             [
                 "python3", str(worktree_dir / "gitops" / "reconciler.py"),
@@ -98,58 +106,115 @@ def run() -> dict:
         )
         print(f"GitOps reconciler running (PID {reconciler_proc.pid}) against project '{project_name}'.")
 
-        # 3. Create candidate commit with modified gateway config that will fail health checks
-        print("\nPushing candidate commit with broken gateway port to trigger health gate...")
+        # 3. Create candidate commit with modified gateway config (valid syntax)
+        print("\nPushing candidate commit with modified gateway configuration...")
         cfg_file = stage_dir / "gateway" / "haproxy.cfg"
         orig_cfg = cfg_file.read_text()
-        # Point backend to an invalid port so health check fails
-        broken_cfg = orig_cfg.replace("server minio-a minio-a:9000", "server minio-a minio-a:99999")
-        cfg_file.write_text(broken_cfg)
+        # Add comment line to trigger targeted recreate of gateway service
+        candidate_cfg = orig_cfg + f"\n# Chaos injection candidate deployment {timestamp}\n"
+        cfg_file.write_text(candidate_cfg)
 
         subprocess.run(["git", "add", "gateway/haproxy.cfg"], cwd=stage_dir, capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "chaos: point minio-a to invalid port"], cwd=stage_dir, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", f"feat(gateway): candidate update {timestamp}"], cwd=stage_dir, capture_output=True, check=True)
         subprocess.run(["git", "push", "origin", "deploy"], cwd=stage_dir, capture_output=True, check=True)
 
         res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=stage_dir, capture_output=True, text=True, check=True)
-        bad_commit = res.stdout.strip()
-        print(f"Candidate bad commit pushed: {bad_commit[:7]}")
+        candidate_commit = res.stdout.strip()
+        print(f"Candidate commit pushed: {candidate_commit[:7]}")
 
-        # 4. Wait for reconciler to detect failure, execute rollback, and record bad commit
-        print("Waiting for health gate failure and automatic rollback...")
+        # 4. Monitor reconciler until active health gate begins, then INJECT CHAOS
+        print("Monitoring reconciler for candidate application start...")
+        started_reconcile = False
+        monitor_start = time.monotonic()
+        while time.monotonic() - monitor_start < 15:
+            time.sleep(0.5)
+            if reconciler_log_path.exists():
+                log_content = reconciler_log_path.read_text()
+                if "reconcile_start" in log_content:
+                    started_reconcile = True
+                    break
+
+        if not started_reconcile:
+            print("Warning: reconcile_start not observed in log; proceeding with timed chaos.")
+
+        # Wait 1.5 seconds for apply_targeted to finish recreating gateway and enter run_health_gate
+        time.sleep(1.5)
+
+        # >>> INJECT MID-GATE FAILURE <<<
+        print(">>> INJECTING CHAOS: Killing gateway container during active health gate evaluation <<<")
+        docker_service("kill", "gateway")
+        gw_killed = True
+        chaos_ts = time.monotonic()
+
+        # 5. Wait for reconciler to detect failure, execute rollback, and record bad commit
+        print("Waiting for health gate failure detection and automatic rollback...")
         rolled_back = False
-        start_wait = time.monotonic()
-        while time.monotonic() - start_wait < 35:
+        bad_commits_found = []
+        while time.monotonic() - chaos_ts < 35:
             time.sleep(2)
             if state_file.exists():
                 try:
                     with open(state_file) as f:
                         st = json.load(f)
-                    if bad_commit in st.get("bad_commits", []):
+                    bad_commits_found = st.get("bad_commits", [])
+                    if candidate_commit in bad_commits_found:
                         rolled_back = True
                         break
                 except Exception:
                     pass
 
-        rollback_time_s = int(time.monotonic() - start_wait)
+        rollback_time_s = int(time.monotonic() - chaos_ts)
 
-        # 5. Verify stack health restored
+        # 6. Verify stack health restored after rollback
         st_haproxy = get_haproxy_status()
         minio_a_st = st_haproxy.get("minio_api/minio-a", "DOWN")
-        gateway_healthy = minio_a_st.startswith("UP")
+        
+        # Also check gateway live endpoint HTTP 200
+        gw_live = False
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8080/minio/health/live", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                gw_live = (resp.status == 200)
+        except Exception:
+            gw_live = False
+
+        gateway_healthy = minio_a_st.startswith("UP") and gw_live
 
         print(f"Rollback execution completed: {rolled_back} in {rollback_time_s}s")
         print(f"HAProxy minio-a status after rollback: {minio_a_st}")
+        print(f"Gateway :8080 live HTTP status: {gw_live}")
 
-        held = rolled_back and gateway_healthy
-        print(f"\nHypothesis Held: {held}")
+        # Strict falsifiable assertion clauses:
+        c1 = gw_killed
+        c2 = rolled_back
+        c3 = rollback_time_s <= 35
+        c4 = candidate_commit in bad_commits_found
+        c5 = gateway_healthy
+
+        held = c1 and c2 and c3 and c4 and c5
+
+        print(f"\n--- E5 Assertion Clauses ---")
+        print(f"  - Clause 1 (Gateway container killed during gate): {c1}")
+        print(f"  - Clause 2 (Reconciler triggered automated rollback): {c2}")
+        print(f"  - Clause 3 (Rollback completed within 35s): {c3} ({rollback_time_s}s)")
+        print(f"  - Clause 4 (Candidate marked in bad_commits): {c4}")
+        print(f"  - Clause 5 (Gateway fully restored and live): {c5}")
+        print(f"Overall Hypothesis Held: {held}\n")
 
         details = {
             "experiment": "E5_gitops_chaos",
             "hypothesis": HYPOTHESIS,
             "hypothesis_held": held,
+            "assertions": {
+                "gateway_killed_mid_gate": c1,
+                "reconciler_triggered_rollback": c2,
+                "rollback_within_35s": c3,
+                "bad_commit_recorded": c4,
+                "gateway_restored_healthy": c5,
+            },
             "rto": "N/A",
             "rpo": "N/A",
-            "candidate_commit": bad_commit,
+            "candidate_commit": candidate_commit,
             "rolled_back_to": base_commit,
             "rollback_time_seconds": rollback_time_s,
             "bad_commit_recorded": rolled_back,
@@ -184,4 +249,3 @@ if __name__ == "__main__":
     res = run()
     print("\nResult Summary:")
     print(json.dumps(res, indent=2))
-
