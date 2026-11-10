@@ -65,7 +65,7 @@ echo "--- Bootstrap: Idempotent Replication & Bucket Verification ---"
 "$MC" alias set site-b http://minio-b:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1
 "$MC" alias set gw http://gateway:80 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1
 
-if ! "$MC" admin replicate info site-a >/dev/null 2>&1; then
+if "$MC" admin replicate info site-a 2>&1 | grep -q "SiteReplication is not enabled"; then
     echo "Site replication unconfigured. Initializing site replication between site-a and site-b..."
     "$MC" admin replicate add site-a site-b
     sleep 2
