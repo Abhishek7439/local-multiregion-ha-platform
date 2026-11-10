@@ -105,12 +105,14 @@ def main():
         json.dump({"deployed": base_commit, "last_good": base_commit, "last_processed": base_commit, "bad_commits": []}, f)
 
     # 4. Start continuous reconciler in background
+    project_name = os.environ.get("COMPOSE_PROJECT_NAME", "setu-multiregion")
     reconciler_log = open("/tmp/gitops-demo-reconciler.log", "w")
     proc = subprocess.Popen(
         ["python3", str(WORKTREE_DIR / "gitops" / "reconciler.py"),
          "--worktree", str(WORKTREE_DIR),
          "--remote", str(BARE_REMOTE),
          "--branch", "deploy",
+         "--project", project_name,
          "--interval", "2"],
         cwd=WORKTREE_DIR,
         stdout=reconciler_log,
@@ -169,7 +171,7 @@ def main():
             print("Reconciler daemon stopped.")
 
         # Re-apply gateway from BASE_REPO to ensure Docker container bind mount points back to base repo
-        run(["docker", "compose", "up", "-d", "--no-deps", "gateway"], cwd=BASE_REPO)
+        run(["docker", "compose", "-p", project_name, "up", "-d", "--no-deps", "gateway"], cwd=BASE_REPO)
 
         # Cleanup temporary directories
         print("Cleaning up temporary bare remote and worktrees...")

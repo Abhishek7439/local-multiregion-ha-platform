@@ -433,7 +433,7 @@ def main():
     parser.add_argument("--worktree", default="/tmp/setu-gitops-wt", help="Path to deployment worktree")
     parser.add_argument("--remote", default="/tmp/setu-gitops-remote.git", help="Git remote URL or path")
     parser.add_argument("--branch", default="deploy", help="Branch to track")
-    parser.add_argument("--project", default="setu-multiregion", help="Docker Compose project name")
+    parser.add_argument("--project", default=os.environ.get("COMPOSE_PROJECT_NAME", "setu-multiregion"), help="Docker Compose project name")
     parser.add_argument("--state-file", default=None, help="State file path")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
     parser.add_argument("--interval", type=int, default=2, help="Poll interval in seconds")
