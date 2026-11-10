@@ -1,4 +1,4 @@
-.PHONY: help doctor up down restart ps logs health controller rpo audit gitops-demo demo chaos
+.PHONY: help doctor up down restart ps logs health controller rpo audit gitops-demo demo chaos package
 
 SHELL := /bin/bash
 
@@ -15,6 +15,8 @@ help:
 	@echo "  make audit       - Run deep periodic integrity audit (all objects SHA-256)"
 	@echo "  make gitops-demo - Run standalone GitOps self-healing & auto-rollback demo"
 	@echo "  make demo        - Execute full end-to-end self-healing demo (<10 min)"
+	@echo "  make chaos       - Run full 5-experiment chaos engineering suite"
+	@echo "  make package     - Build verified submission directory and zip archive (<20 MB)"
 
 doctor:
 	@chmod +x scripts/doctor.sh
@@ -56,3 +58,8 @@ demo:
 
 chaos:
 	@python3 chaos/runner.py
+
+package:
+	@chmod +x scripts/build_submission.sh
+	@./scripts/build_submission.sh
+

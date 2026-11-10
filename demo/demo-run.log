@@ -1,0 +1,151 @@
+==========================================================
+   SETU SWFW_5S_02: Self-Healing With Proof (End-to-End)  
+==========================================================
+Architecture:
+ - Gateway:   HAProxy (:8080) with active health checks & admin socket (:9999)
+ - Region A:  MinIO primary (:9100 / :9101)
+ - Region B:  MinIO standby (:9200 / :9201)
+ - Storage:   Two-way active-active MinIO site replication
+ - DR Agent:  Python state machine with fast metadata failback gate
+ - GitOps:    Autonomous reconciler with active health gate & auto-rollback
+ - Project:   setu-multiregion
+==========================================================
+
+--- Step 1: Verify Stack Health ---
+ Container setu-multiregion-minio-a-1 Running 
+ Container setu-multiregion-minio-b-1 Running 
+ Container setu-multiregion-gateway-1 Running 
+ Container setu-multiregion-toxiproxy-1 Running 
+ Container setu-multiregion-monitor-1 Recreate 
+ Container setu-multiregion-monitor-1 Recreated 
+ Container setu-multiregion-monitor-1 Starting 
+ Container setu-multiregion-monitor-1 Started 
+Region A:  UP (HTTP 200)
+Region B:  UP (HTTP 200)
+Gateway:   UP (HTTP 200)
+
+--- Bootstrap: Idempotent Replication & Bucket Verification ---
+Bootstrap complete: replication and 'demo' bucket ready.
+
+--- Step 2: Normal Operation (Gateway Write -> Replicated to Region B) ---
+Writing object 'gw/demo/demo-sample-20261110T123808Z.txt' via Gateway (:8080)...
+Waiting for replication to Region B (site-b)...
+Read from Region B: 'demo payload created at 2026-11-10T12:38:08Z'
+SHA-256 Region A: 2e882f20a2706eb59ee976d31e1d557ca8d019b3de8809a20c97ebdf44e2f001
+SHA-256 Region B: 2e882f20a2706eb59ee976d31e1d557ca8d019b3de8809a20c97ebdf44e2f001
+Integrity: MATCH (normal replication verified)
+
+--- Step 3: Starting DR Controller ---
+DR Controller started in background (PID 72085)
+
+--- Step 4: Injecting Disaster — Stopping Region A ---
+ Container setu-multiregion-minio-a-1 Stopping 
+ Container setu-multiregion-minio-a-1 Stopped 
+Region A stopped at 2026-11-10T12:38:13Z
+Waiting for DR controller to detect failure and execute failover...
+
+--- Step 5: Failover Verification ---
+Controller events during disaster:
+{"event": "transition", "from": "HEALTHY", "to": "DEGRADED", "region_a": "DOWN", "region_b": "UP", "reason": "region A health failed", "ts": "2026-11-10T12:38:14Z"}
+{"event": "transition", "from": "DEGRADED", "to": "FAILOVER", "reason": "region A still down after the grace window", "ts": "2026-11-10T12:38:17Z"}
+{"event": "fence", "server": "minio-a", "action": "disable", "reply": "", "ts": "2026-11-10T12:38:17Z"}
+{"event": "rto", "milliseconds": 4011, "write_attempt": 1, "write_ms": 1000, "object": "gw/demo/rto-20261110T123817Z.txt", "region_b": "UP", "ts": "2026-11-10T12:38:18Z"}
+HAProxy backend minio_api -> server minio-a status: MAINT (resolution)
+Failover verified: minio-a is safely fenced (MAINT).
+
+--- Step 6: Disaster Recovery — Restarting Region A ---
+ Container setu-multiregion-minio-a-1 Starting 
+ Container setu-multiregion-minio-a-1 Started 
+Region A restarted at 2026-11-10T12:38:26Z
+Controller in RECOVERING state: waiting for fast integrity verification and automatic failback...
+  ... syncing and checking checksums (2s)
+  ... syncing and checking checksums (4s)
+  ... syncing and checking checksums (6s)
+Failback complete!
+Controller events during recovery:
+{"event": "start", "state": "HEALTHY", "grace_seconds": 3, "recovering_deadline_seconds": 180, "ts": "2026-11-10T12:38:11Z"}
+{"event": "transition", "from": "HEALTHY", "to": "DEGRADED", "region_a": "DOWN", "region_b": "UP", "reason": "region A health failed", "ts": "2026-11-10T12:38:14Z"}
+{"event": "checksum", "match": false, "count_a": 150, "count_b": 151, "only_a": [], "only_b": ["demo/rto-20261110T123817Z.txt"], "different": [], "ts": "2026-11-10T12:38:30Z"}
+{"event": "checksum", "match": true, "count_a": 151, "count_b": 151, "only_a": [], "only_b": [], "different": [], "ts": "2026-11-10T12:38:32Z"}
+{"event": "transition", "from": "RECOVERING", "to": "FAILBACK", "reason": "checksums match, so Region A may take traffic again", "reply": "", "ts": "2026-11-10T12:38:32Z"}
+{"event": "transition", "from": "FAILBACK", "to": "HEALTHY", "reason": "failback complete", "ts": "2026-11-10T12:38:32Z"}
+HAProxy backend minio_api -> server minio-a status: UP
+Recovery verified: minio-a restored and un-fenced (UP).
+
+--- Step 7: Stopping Controller for Independent RPO Measurement ---
+
+--- Step 8: Measuring RPO (Numbered Write Stream) ---
+ Container setu-multiregion-minio-a-1 Stopping 
+ Container setu-multiregion-minio-a-1 Stopped 
+ Container setu-multiregion-minio-a-1 Starting 
+ Container setu-multiregion-minio-a-1 Started 
+ Container setu-multiregion-minio-a-1 Killing 
+ Container setu-multiregion-minio-a-1 Killed 
+ Container setu-multiregion-minio-a-1 Starting 
+ Container setu-multiregion-minio-a-1 Started 
+{
+  "graceful_stop": {
+    "mode": "graceful_stop",
+    "tag": "stop-1794314317",
+    "acked": 12,
+    "missing": [],
+    "rpo_objects": 0,
+    "stopped_region_a": true,
+    "stop_ms": 8156
+  },
+  "kill": {
+    "mode": "kill",
+    "tag": "kill-1794314341",
+    "acked": 12,
+    "missing": [],
+    "rpo_objects": 0,
+    "stopped_region_a": true,
+    "stop_ms": 8641
+  }
+}
+RPO verified: 0 missing acknowledged objects.
+
+--- Step 9: Cleaning Up Ephemeral RPO Test Buckets ---
+  Cleaned ephemeral bucket: rpo-kill-1794314341
+  Cleaned ephemeral bucket: rpo-stop-1794314317
+Ephemeral RPO buckets removed.
+
+--- Step 10: GitOps Continuous Deployment & Automated Rollback (AT5) ---
+==========================================================
+   GitOps Self-Healing & Continuous Deployment (M4 AT5)   
+==========================================================
+Creating temporary bare remote and deployment worktree...
+Reconciler polling daemon started (PID 73292)
+
+--- Phase A: Benign Configuration Change (Auto-Apply) ---
+Pushed valid commit 23d36ae; waiting for reconciler to deploy...
+PASS: Commit 23d36ae deployed successfully in 8.0s
+
+--- Phase B: Broken Gateway Configuration (Auto-Rollback) ---
+Pushed bad commit ee963d5; waiting for health gate failure and rollback...
+PASS: Bad commit ee963d5 rolled back in 19.0s
+      Active deployed commit restored to: 23d36ae
+HAProxy minio-a status after rollback: UP
+PASS: Gateway restored and healthy.
+Reconciler daemon stopped.
+Cleaning up temporary bare remote and worktrees...
+Cleanup complete. No temporary worktrees or remotes left behind.
+
+==========================================================
+   GITOPS DEMO COMPLETE: AT5 Proven Live
+   - Valid change: deployed in 8.0s
+   - Bad change: rolled back in 19.0s
+   - Working directory clean; temporary remotes cleaned
+==========================================================
+
+==========================================================
+   DEMO COMPLETE: All Platform Criteria Proven Live       
+   - AT1: Multi-region health endpoints (HTTP 200)
+   - AT2: Normal operation cross-region replication
+   - AT3: Automated failover + fencing + RTO measured
+   - AT4: Fast integrity failback + automatic un-fencing
+   - RPO: Measured under graceful stop and SIGKILL (0 missing)
+   - AT5: GitOps continuous auto-apply + auto-rollback
+   - Ephemeral test buckets and worktrees cleaned
+==========================================================
+DEMO_EXIT_CODE=0

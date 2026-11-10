@@ -33,3 +33,4 @@
    - `different`: `[]` (0 corrupted or divergent payloads)
    - `match`: `true`
 4. **Conclusion**: Cryptographic proof confirms 100% byte-for-byte parity across both storage volumes (`minio_a_data` and `minio_b_data`) with zero silent data corruption (bit rot) after all failover, failback, GitOps, and chaos experiments.
+
