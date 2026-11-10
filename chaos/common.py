@@ -285,6 +285,134 @@ def get_haproxy_status() -> dict[str, str]:
     return statuses
 
 
+# ---------------------------------------------------------------------------
+# Toxiproxy helpers (REST API on :8474)
+# ---------------------------------------------------------------------------
+TOXIPROXY_API = "http://127.0.0.1:8474"
+
+
+def toxiproxy_api(method: str, path: str, body: dict | None = None, quiet_404: bool = False) -> dict | None:
+    """Send a request to the Toxiproxy REST API. Returns parsed JSON or None."""
+    url = f"{TOXIPROXY_API}{path}"
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw.strip() else None
+    except urllib.error.HTTPError as e:
+        if not (quiet_404 and e.code == 404):
+            print(f"  Toxiproxy API {method} {path}: HTTP {e.code} — {e.read().decode()}", file=sys.stderr)
+        raise
+    except Exception as e:
+        print(f"  Toxiproxy API {method} {path}: {e}", file=sys.stderr)
+        raise
+
+
+def toxiproxy_ensure_proxy(name: str = "minio_b_replication",
+                           listen: str = "0.0.0.0:9002",
+                           upstream: str = "minio-b:9000") -> dict:
+    """Create (or confirm) the Toxiproxy proxy for the B replication path."""
+    try:
+        return toxiproxy_api("GET", f"/proxies/{name}", quiet_404=True)
+    except Exception:
+        pass
+    return toxiproxy_api("POST", "/proxies", {
+        "name": name, "listen": listen, "upstream": upstream, "enabled": True
+    })
+
+
+def toxiproxy_add_toxic(proxy: str, toxic: dict) -> dict:
+    """Add a toxic to a proxy. Returns the created toxic."""
+    return toxiproxy_api("POST", f"/proxies/{proxy}/toxics", toxic)
+
+
+def toxiproxy_remove_toxic(proxy: str, toxic_name: str) -> None:
+    """Remove a toxic by name. Ignores 404 (already removed)."""
+    try:
+        toxiproxy_api("DELETE", f"/proxies/{proxy}/toxics/{toxic_name}", quiet_404=True)
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+    except Exception:
+        pass
+
+
+def toxiproxy_remove_all_toxics(proxy: str = "minio_b_replication") -> None:
+    """Remove all toxics from a proxy (restore clean pass-through)."""
+    try:
+        info = toxiproxy_api("GET", f"/proxies/{proxy}")
+        if info and "toxics" in info:
+            for t in info["toxics"]:
+                toxiproxy_remove_toxic(proxy, t["name"])
+    except Exception:
+        pass
+
+
+def toxiproxy_delete_proxy(name: str = "minio_b_replication") -> None:
+    """Delete a proxy entirely. Ignores 404."""
+    try:
+        toxiproxy_api("DELETE", f"/proxies/{name}")
+    except Exception:
+        pass
+
+
+def repoint_replication_through_proxy() -> bool:
+    """Re-point site-a's replication target for site-b through Toxiproxy.
+
+    Uses 'mc admin replicate info --json' to discover site-b's deployment ID,
+    then 'mc admin replicate update' to change the endpoint to toxiproxy:9002.
+    """
+    # Get site-b deployment ID
+    res = run_mc(["admin", "replicate", "info", "site-a", "--json"])
+    if res.returncode != 0:
+        print(f"  ERROR: mc admin replicate info failed: {res.stderr}", file=sys.stderr)
+        return False
+    info = json.loads(res.stdout)
+    site_b_id = None
+    for site in info.get("sites", []):
+        if site.get("name") == "site-b":
+            site_b_id = site["deploymentID"]
+            break
+    if not site_b_id:
+        print("  ERROR: Could not find site-b deployment ID", file=sys.stderr)
+        return False
+
+    # Update endpoint to go through Toxiproxy
+    res = run_mc(["admin", "replicate", "update", "site-a",
+                  "--deployment-id", site_b_id,
+                  "--endpoint", "http://toxiproxy:9002"])
+    if res.returncode != 0:
+        print(f"  ERROR: replicate update failed: {res.stderr}", file=sys.stderr)
+        return False
+    print(f"  Replication re-pointed: site-a → toxiproxy:9002 → minio-b:9000")
+    return True
+
+
+def repoint_replication_direct() -> bool:
+    """Revert site-a's replication target for site-b back to direct (minio-b:9000)."""
+    res = run_mc(["admin", "replicate", "info", "site-a", "--json"])
+    if res.returncode != 0:
+        return False
+    info = json.loads(res.stdout)
+    site_b_id = None
+    for site in info.get("sites", []):
+        if site.get("name") == "site-b":
+            site_b_id = site["deploymentID"]
+            break
+    if not site_b_id:
+        return False
+    res = run_mc(["admin", "replicate", "update", "site-a",
+                  "--deployment-id", site_b_id,
+                  "--endpoint", "http://minio-b:9000"])
+    if res.returncode != 0:
+        print(f"  ERROR: replicate rollback failed: {res.stderr}", file=sys.stderr)
+        return False
+    print(f"  Replication restored: site-a → minio-b:9000 (direct)")
+    return True
+
+
 def start_dr_controller(logfile: str = "/tmp/setu-chaos-dr.log") -> subprocess.Popen:
     """Start background DR controller to handle automated failover, fencing, and failback."""
     log_fp = open(logfile, "w")

@@ -1,7 +1,9 @@
 """M5 Chaos Engineering Suite Runner.
 
-Executes Stage 1 experiments (E1 Kill, E2 Pause, E5 GitOps Chaos),
-records hypotheses, measured RTO/RPO metrics, and outputs the markdown
+Executes all 5 experiments:
+  Stage 1: E1 (Kill), E2 (Pause), E5 (GitOps Chaos)
+  Stage 3: E3 (Latency/Bandwidth), E4 (Partition)
+Records hypotheses, measured RTO/RPO metrics, and outputs the markdown
 evidence report to docs/04-test-evidence/m5-chaos.md.
 """
 
@@ -16,7 +18,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from controller.proof import compare_sites
 from chaos.common import get_project_name, run_mc
-from chaos.experiments import e1_kill, e2_pause, e5_gitops_chaos
+from chaos.experiments import e1_kill, e2_pause, e3_latency, e4_partition, e5_gitops_chaos
 
 REPORT_FILE = ROOT_DIR / "docs" / "04-test-evidence" / "m5-chaos.md"
 
@@ -74,6 +76,12 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
         elif eid == "E2_pause":
             name = "E2: Gray Failure (docker pause)"
             mech = "Socket freeze, client timeout/redispatch to minio-b"
+        elif eid == "E3_latency":
+            name = "E3: WAN Latency & Bandwidth Throttling"
+            mech = "Toxiproxy latency/bandwidth toxics on replication path"
+        elif eid == "E4_partition":
+            name = "E4: Asymmetric Network Partition"
+            mech = "Toxiproxy timeout toxic blocks A→B; conflict resolution after heal"
         elif eid == "E5_gitops_chaos":
             name = "E5: Chaos During GitOps Deploy"
             mech = "Active health gate failure & automated rollback to last_good"
@@ -122,6 +130,31 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
             lines.append(f"  - Bad Commit Persisted: `{r.get('bad_commit_recorded')}`")
             lines.append(f"  - Gateway Restored: `{r.get('gateway_restored')}`")
 
+        if eid == "E3_latency" and "scenarios" in r:
+            lines.append(f"\n**Scenario Breakdown**:")
+            bl = r.get("baseline", {})
+            lines.append(f"- Baseline (no toxics): lag = `{bl.get('replication_lag_s')}s`, "
+                         f"replicated = `{bl.get('objects_replicated')}`")
+            for s in r["scenarios"]:
+                lines.append(f"- {s['scenario']}: lag = `{s['replication_lag_s']}s`, "
+                             f"write rate = `{s['write_rate_req_s']} req/s`, "
+                             f"replicated = `{s['objects_replicated']}/{s['acked']}`")
+
+        if eid == "E4_partition":
+            lines.append(f"- **Partition Duration**: `{r.get('partition_duration_s')}s`")
+            lines.append(f"- **Catch-up Time After Heal**: `{r.get('catch_up_time_s')}s`")
+            lines.append(f"- **Writes During Partition**: A = `{r.get('partition_writes_a')}`, "
+                         f"B = `{r.get('partition_writes_b')}`")
+            missing_a = r.get("missing_a_on_b_after_heal", [])
+            missing_b = r.get("missing_b_on_a_after_heal", [])
+            lines.append(f"- **Non-conflict writes lost**: A→B missing = `{len(missing_a)}`, "
+                         f"B→A missing = `{len(missing_b)}`")
+            if "conflict_resolution" in r:
+                lines.append(f"\n**Conflict Resolution**:")
+                for c in r["conflict_resolution"]:
+                    lines.append(f"- `{c['key']}`: winner = `{c.get('winner')}`, "
+                                 f"consistent = `{c.get('consistent')}`")
+
         if "iterations" in r:
             lines.append("\n**Iteration Breakdown**:")
             for it in r["iterations"]:
@@ -140,7 +173,8 @@ def generate_markdown_report(results: list[dict], pre_check: dict, post_check: d
 def main():
     print("==========================================================")
     print("   SETU SWFW_5S_02 — Milestone 5 Chaos Engineering Suite  ")
-    print("   Stage 1: E1 (Kill), E2 (Pause), E5 (Deploy Chaos)      ")
+    print("   E1 (Kill), E2 (Pause), E3 (Latency), E4 (Partition),  ")
+    print("   E5 (Deploy Chaos) — 5 experiments total                ")
     print("==========================================================")
 
     # 1. Baseline Pre-check
@@ -176,7 +210,29 @@ def main():
     # Settle
     time.sleep(3)
 
-    # 4. Run E5: GitOps Deploy Chaos
+    # 4. Run E3: WAN Latency & Bandwidth Throttling (via Toxiproxy)
+    try:
+        e3_res = e3_latency.run()
+        results.append(e3_res)
+    except Exception as e:
+        print(f"ERROR in E3_latency: {e}", file=sys.stderr)
+        results.append({"experiment": "E3_latency", "hypothesis_held": False, "error": str(e)})
+
+    # Settle
+    time.sleep(3)
+
+    # 5. Run E4: Asymmetric Network Partition & Conflict Resolution
+    try:
+        e4_res = e4_partition.run()
+        results.append(e4_res)
+    except Exception as e:
+        print(f"ERROR in E4_partition: {e}", file=sys.stderr)
+        results.append({"experiment": "E4_partition", "hypothesis_held": False, "error": str(e)})
+
+    # Settle
+    time.sleep(3)
+
+    # 6. Run E5: GitOps Deploy Chaos
     try:
         e5_res = e5_gitops_chaos.run()
         results.append(e5_res)
@@ -184,7 +240,7 @@ def main():
         print(f"ERROR in E5_gitops_chaos: {e}", file=sys.stderr)
         results.append({"experiment": "E5_gitops_chaos", "hypothesis_held": False, "error": str(e)})
 
-    # 5. Clean ephemeral failover probe files generated by DR controller during tests
+    # 7. Clean ephemeral failover probe files generated by DR controller during tests
     post_demo_keys = get_bucket_keys("site-a/demo")
     new_rto_keys = sorted(list(post_demo_keys - pre_demo_keys))
     cleaned_rto_keys = []
@@ -198,22 +254,22 @@ def main():
         print(f"\nCleaned {len(cleaned_rto_keys)} ephemeral DR probe files from demo: {cleaned_rto_keys}")
         time.sleep(2)
 
-    # 6. Post-Flight Integrity Check
+    # 8. Post-Flight Integrity Check
     print("\n--- Running Post-Suite Integrity Check ---")
     post_check = compare_sites()
     print(f"Post-Suite: match={post_check.get('match')}, count_a={post_check.get('count_a')}, count_b={post_check.get('count_b')}")
 
-    # 7. Generate Markdown Report
+    # 9. Generate Markdown Report
     generate_markdown_report(results, pre_check, post_check, cleaned_rto_keys)
 
     all_held = all(r.get("hypothesis_held") for r in results)
     print("\n==========================================================")
     if all_held:
-        print("   STAGE 1 CHAOS SUITE PASSED: All Hypotheses Held        ")
+        print("   M5 CHAOS SUITE PASSED: All 5 Hypotheses Held          ")
         print("==========================================================")
         sys.exit(0)
     else:
-        print("   STAGE 1 CHAOS SUITE COMPLETED: One or more failed      ")
+        print("   M5 CHAOS SUITE COMPLETED: One or more hypotheses failed")
         print("==========================================================")
         sys.exit(1)
 

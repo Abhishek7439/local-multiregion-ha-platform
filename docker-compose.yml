@@ -2,15 +2,16 @@ name: setu-multiregion
 
 # Two "regions" on one Linux box. Each region has its own network + volume.
 # Cross-region traffic only travels over the shared "global" network.
-x-minio: &minio
+x-minio:
   # Pinned digest of cgr.dev/chainguard/minio:latest pulled 2026-11-03.
   # Dated tags are not public; the digest is the pin.
+  &minio
   image: cgr.dev/chainguard/minio@sha256:3c60a2a8c4d33409a9bc7a623a7fcbfb4605adc3d89422d2f53b3f673a6e5597
   restart: unless-stopped
   environment:
     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-  command: ["server", "/data", "--console-address", ":9001"]
+  command: [ "server", "/data", "--console-address", ":9001" ]
   # WSL sees ~7.6 GiB even though the PC has 16 GB. Cap each MinIO
   # so the two regions cannot exhaust the VM.
   mem_limit: 512m
@@ -19,38 +20,56 @@ services:
   minio-a:
     <<: *minio
     hostname: minio-a
-    networks: [region_a, global]
-    volumes: [minio_a_data:/data]
-    ports: ["9100:9000", "9101:9001"]
+    networks: [ region_a, global ]
+    volumes: [ minio_a_data:/data ]
+    ports: [ "9100:9000", "9101:9001" ]
 
   minio-b:
     <<: *minio
     hostname: minio-b
-    networks: [region_b, global]
-    volumes: [minio_b_data:/data]
-    ports: ["9200:9000", "9201:9001"]
+    networks: [ region_b, global ]
+    volumes: [ minio_b_data:/data ]
+    ports: [ "9200:9000", "9201:9001" ]
 
   # Single entry point. Region A is primary, Region B is the backup.
   # HAProxy checks /minio/health/live itself. Chosen in M1 over nginx.
   gateway:
     image: haproxy@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa
-    depends_on: [minio-a, minio-b]
-    networks: [global]
-    ports: ["8080:80", "127.0.0.1:9999:9999"]
-    volumes: ["./gateway/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"]
+    depends_on: [ minio-a, minio-b ]
+    networks: [ global ]
+    ports: [ "8080:80", "127.0.0.1:9999:9999" ]
+    volumes: [ "./gateway/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" ]
     # Official image runs as user haproxy and must be allowed to bind port 80.
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
     restart: unless-stopped
     mem_limit: 128m
 
+  # Toxiproxy: sits on the A↔B replication path for chaos experiments.
+  # Normal operation: proxy passes through transparently (no toxics).
+  # Experiments add latency, bandwidth, or timeout toxics via REST API (:8474).
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    hostname: toxiproxy
+    networks: [ global ]
+    ports:
+      - "8474:8474" # Toxiproxy admin API
+      - "9002:9002" # Proxy → minio-b:9000 (replication path)
+    healthcheck:
+      test: [ "CMD", "/toxiproxy-cli", "list" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 64m
+
   # Seed of the DR controller: logs region health every 5s.
   monitor:
     image: curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
-    networks: [global]
+    networks: [ global ]
     restart: unless-stopped
     mem_limit: 64m
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - |
         while true; do
@@ -64,7 +83,7 @@ services:
 networks:
   region_a: { name: setu_region_a }
   region_b: { name: setu_region_b }
-  global:   { name: setu_global }
+  global: { name: setu_global }
 
 volumes:
   minio_a_data:
