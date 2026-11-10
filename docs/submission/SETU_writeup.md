@@ -10,7 +10,7 @@
 ### [SETU_HEADING_1: Problem Statement & Objectives]
 High availability (HA) and disaster recovery (DR) across isolated failure domains are fundamental requirements for production data platforms. Validating failure modes—including failover, network partitions, gray failures, and split-brain scenarios—is typically expensive and non-deterministic on public cloud infrastructure.
 
-The goal of course project **SETU SWFW_5S_02** is to build and empirically validate a multi-region object storage platform entirely on a single Linux workstation (16 GB RAM, Ubuntu / WSL2). The system must provide active-active object storage replication, automated failover with measurable Recovery Time Objective (RTO) and Recovery Point Objective (RPO), an automated integrity-checked failback gate, autonomous GitOps continuous deployment with health checking and rollback, and a reproducible chaos engineering test suite—without relying on Kubernetes or third-party Python packages.
+The goal of course project **SETU SWFW_5S_02** is to build and empirically validate a multi-region object storage platform entirely on a single Linux workstation (16 GB RAM, Ubuntu Linux). The system must provide active-active object storage replication, automated failover with measurable Recovery Time Objective (RTO) and Recovery Point Objective (RPO), an automated integrity-checked failback gate, autonomous GitOps continuous deployment with health checking and rollback, and a reproducible chaos engineering test suite—without relying on Kubernetes or third-party Python packages.
 
 ---
 

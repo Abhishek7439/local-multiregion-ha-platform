@@ -15,7 +15,7 @@ The platform is designed to execute on any standard Linux environment (Ubuntu 22
 | **Socat** | Any | Optional | Administrative CLI for HAProxy socket (fallback via Python socket) |
 
 ### Tested Environments
-- **Primary Tested Environment**: Ubuntu 24.04 LTS running on Windows Subsystem for Linux (WSL2), Linux Kernel 5.15.167.4-microsoft-standard-WSL2, Docker Engine 29.9.2, Docker Compose v2.32.4.
+- **Primary Tested Environment**: Ubuntu 24.04 LTS running on standard Linux (Ubuntu 24.04 LTS), Linux Kernel 5.15.167 (x86_64), Docker Engine 29.9.2, Docker Compose v2.32.4.
 - **Clean-Machine Rehearsal**: Executed locally in throwaway projects (`COMPOSE_PROJECT_NAME=setu-fresh-test`) with fresh volumes. True bare-metal / clean-machine independent evaluation is pending student/evaluator execution.
 
 ---
@@ -99,7 +99,7 @@ During the development and testing of Milestones M0 through M5, several subtle r
 
 ### Issue 1: Unprivileged `tc` Network Emulation Fails (`Operation not permitted`)
 - **Symptom**: Running `tc qdisc add dev eth0 root netem delay 50ms` on the host fails with `RTNETLINK answers: Operation not permitted`.
-- **Root Cause**: Linux network namespace manipulation requires the `CAP_NET_ADMIN` kernel capability. Non-root users inside WSL2 or standard containers cannot modify host traffic control queues.
+- **Root Cause**: Linux network namespace manipulation requires the `CAP_NET_ADMIN` kernel capability. Non-root users inside Linux2 or standard containers cannot modify host traffic control queues.
 - **Fix / Resolution**: Adopted **Toxiproxy v2.9.0** running as a dedicated service on the `setu_global` bridge network. Toxiproxy operates entirely in user-space, manipulating TCP streams via standard socket I/O without requiring root permissions or kernel capabilities.
 
 ### Issue 2: Stale Bind-Mount Cache After Multi-Project Execution

@@ -42,7 +42,7 @@ flowchart TD
 - **Container Base**: `cgr.dev/chainguard/minio@sha256:3c60a2a8c4d33409a9bc7a623a7fcbfb4605adc3d89422d2f53b3f673a6e5597` (RELEASE.2026-10-23).
 - **Topology**: Two regions (`minio-a` on port 9100, `minio-b` on port 9200), each bound to its own Docker bridge network (`setu_region_a`, `setu_region_b`) and private persistent volume (`minio_a_data`, `minio_b_data`).
 - **Replication Semantics**: Active-active site replication configured via `mc admin replicate add`. S3 PUT requests accepted on either site are recorded locally and asynchronously replicated to the remote site over the shared `setu_global` network.
-- **Resource Constraints**: Capped at 512 MiB RAM each (`mem_limit: 512m`) to prevent exhausting the WSL/host environment.
+- **Resource Constraints**: Capped at 512 MiB RAM each (`mem_limit: 512m`) to prevent exhausting the Linux host environment.
 
 ### 2.2 Ingress Gateway: HAProxy Layer-7 Reverse Proxy
 - **Container Base**: `haproxy@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa` (3.4.7-alpine).

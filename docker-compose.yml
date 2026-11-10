@@ -12,7 +12,7 @@ x-minio:
     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
   command: [ "server", "/data", "--console-address", ":9001" ]
-  # WSL sees ~7.6 GiB even though the PC has 16 GB. Cap each MinIO
+  # Host allocates ~7.6 GiB even though the PC has 16 GB. Cap each MinIO
   # so the two regions cannot exhaust the VM.
   mem_limit: 512m
 

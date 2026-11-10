@@ -15,7 +15,7 @@ Choice: HAProxy, image digest sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb
 Reason: On 2026-11-03, with nginx already running, stopping Region A still allowed the first PUT (1218 ms after the stop) and a GET. Restarting nginx while A was stopped did not. The log was `host not found in upstream "minio-a:9000"`, and both PUT and GET got connection refused. HAProxy passed the same stop test: first PUT succeeded, 2447 ms from stop completion to write completion, and the GET returned `m1-haproxy-proof 1` from Region B. After a gateway restart with A still down, HAProxy reached HTTP 200 and the next PUT succeeded. Docs: https://www.haproxy.com/documentation/haproxy-configuration-tutorials/reliability/health-checks/ and https://hub.docker.com/_/haproxy/
 
 ## D4 - Project directory
-Options: OneDrive path on Windows, /mnt/c inside WSL, Linux home.
+Options: OneDrive path on Windows, /mnt/c inside Linux, Linux home.
 Choice: /home/cloud_automator/setu-starter.
 Reason: Docker bind mounts and shell scripts are reliable on the Linux filesystem. The brief forbids keeping the project under /mnt/c.
 
@@ -25,9 +25,9 @@ Choice: not chosen in M0. Do not install Toxiproxy yet.
 Reason: `tc` is installed. As user cloud_automator, `tc qdisc add dev lo root netem delay 1ms` returned `RTNETLINK answers: Operation not permitted`. `sudo -n` asked for a password, so root was not tested. The latency experiment (M5) must re-check with sudo before we pick Toxiproxy.
 
 ## D6 - Container memory limits
-Options: no limits, or caps sized to the WSL VM.
+Options: no limits, or caps sized to the Linux host environment.
 Choice: MinIO 512 MiB each, gateway 128 MiB, monitor 64 MiB.
-Reason: The PC has 16 GB, but this WSL VM only exposes about 7.6 GiB to Docker. Caps stop two MinIO processes from taking the whole VM. `docker inspect` showed Memory=536870912 for each MinIO.
+Reason: The PC has 16 GB, but this Linux host environment only exposes about 7.6 GiB to Docker. Caps stop two MinIO processes from taking the whole VM. `docker inspect` showed Memory=536870912 for each MinIO.
 
 ## D7 - DR controller, integrity-based failback, and RPO measurement
 Options: keep curl monitor only, add MinIO Python SDK, or use Python's standard library plus existing `scripts/mc.sh`.
@@ -96,7 +96,7 @@ Reason: The course platform imposes a strict zero-third-party-package requiremen
 ## D11 - Network Fault Injection Tool (Toxiproxy vs Traffic Control)
 Options: Host Linux Traffic Control (`tc netem`), container sidecar with `CAP_NET_ADMIN`, or Toxiproxy v2.9.0.
 Choice: Toxiproxy v2.9.0 deployed as a service on the `setu_global` network, bound to port 9002 (replication path) and port 8474 (REST API).
-Reason: Host `tc` requires root and `CAP_NET_ADMIN`, which failed in unprivileged WSL2 (`RTNETLINK answers: Operation not permitted`). A sidecar container with `CAP_NET_ADMIN` works in WSL2, but affects ALL container traffic indiscriminately (including health checks and gateway client traffic). Toxiproxy operates entirely in user-space, sits surgically only on the `site-a` -> `site-b` replication link, provides directional control (`upstream` vs `downstream`), and exposes an intuitive JSON REST API that the student can easily explain during review. Proven in throwaway trial with full round-trip rollback before being added to `docker-compose.yml`.
+Reason: Host `tc` requires root and `CAP_NET_ADMIN`, which failed in unprivileged Linux user space (`RTNETLINK answers: Operation not permitted`). A sidecar container with `CAP_NET_ADMIN` works in rootful containers, but affects ALL container traffic indiscriminately (including health checks and gateway client traffic). Toxiproxy operates entirely in user-space, sits surgically only on the `site-a` -> `site-b` replication link, provides directional control (`upstream` vs `downstream`), and exposes an intuitive JSON REST API that the student can easily explain during review. Proven in throwaway trial with full round-trip rollback before being added to `docker-compose.yml`.
 
 ## D12 - Empirical Tuning of Experiment E3 WAN Latency and Bandwidth Thresholds
 Options: Keep arbitrary exploratory thresholds (100ms / 512KB/s) or tune parameters to physical distributed systems realities.

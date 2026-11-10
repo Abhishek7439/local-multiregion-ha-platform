@@ -124,7 +124,7 @@ def wrap_terminal(title, prompt_cmd, body_html, caption_file, date="10 November 
     <div class="title">{title}</div>
   </div>
   <div class="body">
-<span class="prompt">cloud_automator@wsl2:~/setu-starter$</span> {prompt_cmd}
+<span class="prompt">cloud_automator@linux:~/setu-starter$</span> {prompt_cmd}
 {body_html}
   </div>
   <div class="caption">

@@ -17,7 +17,7 @@
 | **6** | Independent RPO measurement | Numbered write streams during graceful stop and SIGKILL | Zero acknowledged writes missing on backup (`rpo_objects: 0`) | **[x] Complete** | `docs/04-test-evidence/m3-failback-rpo.md` |
 | **7** | GitOps continuous deployment | Autonomous reconciler polling bare remote, targeted compose apply, active health gate | Valid commit auto-deployed; broken config detected and automatically rolled back | **[x] Complete** | `docs/04-test-evidence/m4-gitops.md` |
 | **8** | Chaos engineering suite | Automated runner executing 5 experiments (E1 crash, E2 pause, E3 latency, E4 partition, E5 deploy chaos) | Executable via `make chaos`; all 5 hypotheses empirically verified | **[x] Complete** | `docs/04-test-evidence/m5-chaos.md` |
-| **9** | Production runbook & tooling | Single-command interfaces: `make doctor`, `make demo`, `make chaos`, `make audit` | Verified clean execution on Ubuntu Linux / WSL2 with exit code 0 | **[x] Complete** | `docs/05-runbook.md` |
+| **9** | Production runbook & tooling | Single-command interfaces: `make doctor`, `make demo`, `make chaos`, `make audit` | Verified clean execution on Ubuntu Linux / Linux with exit code 0 | **[x] Complete** | `docs/05-runbook.md` |
 
 ---
 

@@ -96,6 +96,32 @@ flowchart TD
 
 ---
 
+---
+
+## 🖥️ Live Container Topology & Object Store Dashboards
+
+In addition to programmatic command-line verification, the platform provides live native dashboards confirming multi-region container orchestration, active-active cross-region replication, and object integrity:
+
+<p align="center">
+  <img src="docs/images/real/01_docker_topology.png" alt="Docker Container Topology" width="880"/>
+  <br>
+  <em>Live verification: Multi-region container topology in Docker (minio-a, minio-b, gateway, toxiproxy, and monitor all running and healthy).</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/real/02_minio_bucket_browser.png" alt="MinIO Object Browser" width="880"/>
+  <br>
+  <em>Live verification: MinIO Web Console Object Browser showing active-active replicated demo bucket (168 synchronized objects across regions).</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/real/03_minio_object_metadata.png" alt="MinIO Object Details" width="880"/>
+  <br>
+  <em>Live verification: MinIO Web Console Object Detail Panel displaying cryptographic ETag, single versioning, and payload integrity.</em>
+</p>
+
+---
+
 ## 🔥 What Makes This Different?
 
 <table>
@@ -290,7 +316,7 @@ Two verification modes:
 2. **Surviving-disk assumption** — RPO 0 was measured with surviving disks at 35–42 writes/s. Disk destruction was not tested.
 3. **RTO includes client timeouts** — Gray failure RTO (7.2s) includes the 3.5s HTTP timeout + HAProxy redispatch window.
 4. **Asymmetric partition only** — Toxiproxy sits on the A→B path; B→A remained directly connected in E4.
-5. **Simulated regions** — Both regions are Docker containers on one Linux kernel (WSL2). WAN characteristics are injected.
+5. **Simulated regions** — Both regions are Docker containers on one Linux kernel. WAN characteristics are injected.
 6. **E3 noise** — Combined lag was slightly lower than latency-only; run-to-run variance, no causal claim.
 
 ---

@@ -6,7 +6,7 @@ This directory contains the demonstration assets for course project **SETU SWFW_
    The full screen recording and live evaluation script detailing the narration, terminal actions, expected outputs, timings, and safety checklist for the 10-step self-healing demonstration (`make demo`).
 
 2. **`demo-run.log`**:
-   An immutable terminal execution log captured with `tee` during a live, end-to-end execution of `make demo` on Ubuntu Linux (WSL2), concluding with exit code 0.
+   An immutable terminal execution log captured with `tee` during a live, end-to-end execution of `make demo` on Ubuntu Linux, concluding with exit code 0.
 
 3. **Demonstration Status**:
    - Live demonstration will be conducted in person during project evaluation.

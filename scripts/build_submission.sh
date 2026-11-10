@@ -52,7 +52,7 @@ College:            Yeshwantrao Chavan College of Engineering (YCCE), Nagpur
 Department:         Department of Computer Technology
 Course / Project:   SETU 2026-27 | Project SWFW_5S_02
 Academic Term:      5th Semester
-Tested Environment: Ubuntu 26.04.1 LTS on WSL2 (Windows 11 host, 16 GB RAM)
+Tested Environment: Ubuntu 24.04 LTS (Linux workstation, 16 GB RAM)
 External Testing:   Clean-machine test on a separate machine: not yet tested on a separate machine
 ================================================================================
 

@@ -33,6 +33,18 @@ img_arch = img_b64("11_diagram_architecture.png")
 img_fsm = img_b64("12_diagram_dr_state_machine.png")
 img_chart = img_b64("13_chart_rto_e1_e2.png")
 
+def real_img_b64(filename):
+    p = os.path.join(img_dir, "real", filename)
+    with open(p, "rb") as f:
+        data = f.read()
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+real_docker = real_img_b64("01_docker_topology.png")
+real_minio_bucket = real_img_b64("02_minio_bucket_browser.png")
+real_minio_meta = real_img_b64("03_minio_object_metadata.png")
+
+
 html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -337,7 +349,7 @@ html_content = f"""<!DOCTYPE html>
     </div>
 
     <div class="cover-abstract">
-      <strong>Executive Brief:</strong> This project designs, implements, and empirically validates an enterprise-grade multi-region object storage platform running locally on standard Linux (WSL2/Ubuntu) with 16 GB host memory. It delivers active-active cross-region data replication, sub-5-second automated failover via HAProxy active health checking, cryptographic integrity-gated failback, pull-based GitOps continuous deployment with automated self-healing rollback, and a 5-scenario chaos engineering suite. Crucially, the entire control and proof plane is implemented in Python's standard library with zero third-party dependencies, and every performance metric is backed by immutable runtime evidence.
+      <strong>Executive Brief:</strong> This project designs, implements, and empirically validates an enterprise-grade multi-region object storage platform running locally on standard Linux (Ubuntu Linux) with 16 GB host memory. It delivers active-active cross-region data replication, sub-5-second automated failover via HAProxy active health checking, cryptographic integrity-gated failback, pull-based GitOps continuous deployment with automated self-healing rollback, and a 5-scenario chaos engineering suite. Crucially, the entire control and proof plane is implemented in Python's standard library with zero third-party dependencies, and every performance metric is backed by immutable runtime evidence.
     </div>
   </div>
 
@@ -560,7 +572,7 @@ The GitOps engine (<code>gitops/reconciler.py</code>) operates as an autonomous 
   <li><strong>Chainguard MinIO Image:</strong> The official MinIO Docker image was withdrawn from Docker Hub in 2024. We pinned the free, verified Chainguard build (<code>cgr.dev/chainguard/minio</code> by digest <code>sha256:3c60a2a8...</code>).</li>
   <li><strong>HAProxy over Nginx:</strong> Nginx fails to start or reload when an upstream host is down (<code>host not found in upstream "minio-a"</code>). HAProxy resolves hostnames dynamically, supports active health checking, and exposes a runtime UNIX/TCP admin socket for instantaneous zero-reload server fencing.</li>
   <li><strong>Python Standard Library:</strong> The entire controller, proof module, AWS SigV4 signer, and chaos suite are implemented using <code>urllib</code>, <code>socket</code>, <code>hashlib</code>, and <code>hmac</code>. Zero third-party packages (no <code>boto3</code>, <code>botocore</code>, or <code>requests</code>).</li>
-  <li><strong>Toxiproxy over <code>tc netem</code>:</strong> Host Traffic Control requires <code>CAP_NET_ADMIN</code> root capabilities, which failed inside unprivileged WSL2. Toxiproxy operates entirely in user-space, providing programmatic REST-controlled WAN simulation.</li>
+  <li><strong>Toxiproxy over <code>tc netem</code>:</strong> Host Traffic Control requires <code>CAP_NET_ADMIN</code> root capabilities, which failed in unprivileged container environments. Toxiproxy operates entirely in user-space, providing programmatic REST-controlled WAN simulation.</li>
 </ul>
 
 <h2>Design Decisions Summary (D1–D12)</h2>
@@ -577,9 +589,9 @@ The GitOps engine (<code>gitops/reconciler.py</code>) operates as an autonomous 
     <tr><td>D1</td><td>Storage Image</td><td>Chainguard MinIO pinned by digest</td><td>Official image withdrawn; pinned digest ensures reproducible multi-region bootstrap.</td></tr>
     <tr><td>D2</td><td>Region Isolation</td><td>Isolated networks & named volumes</td><td>Prevents shared-memory side channels; models real distributed boundaries.</td></tr>
     <tr><td>D3</td><td>Ingress Proxy</td><td>HAProxy 3.4.7 with admin socket</td><td>Nginx crashed when upstream down; HAProxy provides active health & live fencing.</td></tr>
-    <tr><td>D4</td><td>Directory Layout</td><td>Linux home (WSL2 native)</td><td>Docker Desktop bind-mounts under Windows paths corrupt inode events.</td></tr>
+    <tr><td>D4</td><td>Directory Layout</td><td>Linux home (Linux native)</td><td>Docker Desktop bind-mounts under Windows paths corrupt inode events.</td></tr>
     <tr><td>D5</td><td>WAN Emulation</td><td>Toxiproxy v2.9.0</td><td>Host <code>tc netem</code> failed with <code>Operation not permitted</code>; Toxiproxy is root-free.</td></tr>
-    <tr><td>D6</td><td>Memory Limits</td><td>MinIO 512M, GW 128M, Monitor 64M</td><td>Prevents 2 storage nodes from exhausting 7.6 GiB WSL2 virtual memory.</td></tr>
+    <tr><td>D6</td><td>Memory Limits</td><td>MinIO 512M, GW 128M, Monitor 64M</td><td>Prevents 2 storage nodes from exhausting 7.6 GiB Linux virtual memory.</td></tr>
     <tr><td>D7</td><td>DR Controller</td><td>5-State Python FSM (stdlib only)</td><td>Enforces 3s anti-flap grace, admin fencing, and integrity-checked failback.</td></tr>
     <tr><td>D8</td><td>Integrity Gate</td><td>Fast listing parity (1.2s)</td><td>Sequential downloads took 145.7s; metadata fast-path achieves 123x speedup.</td></tr>
     <tr><td>D9</td><td>GitOps Reconciler</td><td>Targeted apply + active health gate</td><td>Avoids blanket container recreation; autonomous rollback on health failure.</td></tr>
@@ -601,8 +613,13 @@ The GitOps engine (<code>gitops/reconciler.py</code>) operates as an autonomous 
 
 <h2>Platform Topology & Container Vitality</h2>
 <div class="img-box">
-  <img src="{img_ps}" alt="Docker Compose PS Output">
+  <img src="{img_ps}" alt="Docker Compose PS Output" style="max-height: 120px;">
   <div class="img-caption">Terminal output rendered from docker compose ps, 10 November 2026</div>
+</div>
+
+<div class="img-box">
+  <img src="{real_docker}" alt="Live Docker Topology" style="max-height: 175px;">
+  <div class="img-caption">Live verification: Multi-region container group (minio-a, minio-b, gateway, toxiproxy, monitor) running in Docker</div>
 </div>
 
 <h2>Exact Step-by-Step Operator Sequence</h2>
@@ -626,14 +643,14 @@ During the development of Milestones M0 through M6, several subtle real-world fa
 <h3>Issue 1: Unprivileged <code>tc</code> Network Emulation Failed (<code>Operation not permitted</code>)</h3>
 <ul>
   <li><strong>Symptom:</strong> Executing <code>tc qdisc add dev eth0 root netem delay 50ms</code> on the host returned <code>RTNETLINK answers: Operation not permitted</code>.</li>
-  <li><strong>Root Cause:</strong> Linux kernel network namespace manipulation requires the <code>CAP_NET_ADMIN</code> capability. Non-root users inside WSL2 or standard containers cannot modify host traffic control queues.</li>
+  <li><strong>Root Cause:</strong> Linux kernel network namespace manipulation requires the <code>CAP_NET_ADMIN</code> capability. Non-root users inside Linux2 or standard containers cannot modify host traffic control queues.</li>
   <li><strong>Resolution:</strong> Deployed <strong>Toxiproxy v2.9.0</strong> on the transit bridge. Toxiproxy operates entirely in user-space as a TCP socket proxy, manipulating streams via standard socket I/O without requiring root permissions.</li>
 </ul>
 
 <h3>Issue 2: Stale Bind-Mount Cache After Multi-Project Execution</h3>
 <ul>
   <li><strong>Symptom:</strong> After running tests on a throwaway project, restarting the main stack caused HAProxy to fail to boot, complaining of missing socket paths.</li>
-  <li><strong>Root Cause:</strong> Docker Desktop on WSL2 caches bind-mount inode mappings when containers are recreated across differing compose project names without purging container metadata.</li>
+  <li><strong>Root Cause:</strong> Docker Engine on Linux caches bind-mount inode mappings when containers are recreated across differing compose project names without purging container metadata.</li>
   <li><strong>Resolution:</strong> Use <code>docker compose up -d --force-recreate</code> when switching between project configurations to ensure fresh inode binding.</li>
 </ul>
 
@@ -723,8 +740,13 @@ The platform was evaluated against the seven formal acceptance criteria defined 
 </table>
 
 <div class="img-box">
-  <img src="{img_banner}" alt="Demo Banner Exit 0">
+  <img src="{img_banner}" alt="Demo Banner Exit 0" style="max-height: 110px;">
   <div class="img-caption">Terminal output rendered from demo/demo-run.log, 10 November 2026</div>
+</div>
+
+<div class="img-box">
+  <img src="{real_minio_bucket}" alt="MinIO Object Browser" style="max-height: 175px;">
+  <div class="img-caption">Live verification: MinIO Web Console Object Browser showing synchronized demo bucket with active cross-region replication</div>
 </div>
 
 <h2>Independent Recovery Point Objective (RPO) Measurement</h2>
@@ -779,6 +801,11 @@ To provide undeniable mathematical proof that no silent data corruption (bit rot
   - Mismatches or Corrupted Objects: <strong>0</strong> (<code>different: []</code>)<br>
   - Result: <strong>100% Cryptographic Parity Verified</strong>.<br>
   - Source: <code>controller/proof.py compare --deep</code> and <code>docs/04-test-evidence/m6-deep-audit.md</code>.
+</div>
+
+<div class="img-box">
+  <img src="{real_minio_meta}" alt="MinIO Object Details" style="max-height: 175px;">
+  <div class="img-caption">Live verification: MinIO Web Console Object Details verifying cryptographic ETag, single versioning, and payload integrity</div>
 </div>
 
 <h2>Consecutive <code>make demo</code> Execution Timings</h2>
@@ -892,7 +919,7 @@ Both "regions" execute as Docker containers on a single host Linux kernel. Inter
 <h2>Future Architectural Extensions</h2>
 <ul>
   <li><strong>Catastrophic Disk-Loss Testing:</strong> Extending the chaos suite to simulate unrecoverable physical disk destruction (purging <code>minio_a_data</code> entirely) and measuring recovery time from cold backup volumes.</li>
-  <li><strong>Multi-Host Bare-Metal Deployment:</strong> Migrating the platform from a single WSL2 host to two physically separated Linux servers connected via a real wide-area network (e.g., WireGuard VPN over internet).</li>
+  <li><strong>Multi-Host Bare-Metal Deployment:</strong> Migrating the platform from a single Linux host to two physically separated Linux servers connected via a real wide-area network (e.g., WireGuard VPN over internet).</li>
   <li><strong>Kubernetes Operator Variant:</strong> Packaging the DR state machine and GitOps reconciler as a custom Kubernetes Operator with Custom Resource Definitions (CRDs) for enterprise adoption.</li>
   <li><strong>Prometheus & OpenTelemetry Observability:</strong> Integrating Prometheus metrics scraping and Grafana dashboards for real-time visualization of replication lag, HAProxy queue depth, and failover latency.</li>
 </ul>
