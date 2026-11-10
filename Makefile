@@ -1,4 +1,4 @@
-.PHONY: help doctor up down restart ps logs health controller rpo audit gitops-demo demo
+.PHONY: help doctor up down restart ps logs health controller rpo audit gitops-demo demo chaos
 
 SHELL := /bin/bash
 
@@ -53,3 +53,6 @@ gitops-demo:
 demo:
 	@chmod +x scripts/demo.sh
 	@./scripts/demo.sh
+
+chaos:
+	@python3 chaos/runner.py
