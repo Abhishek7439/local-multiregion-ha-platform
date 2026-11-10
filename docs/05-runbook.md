@@ -82,7 +82,7 @@ Executes all 5 resilience experiments sequentially and saves the empirical repor
 - `E1`: Abrupt crash (SIGKILL `minio-a`) under concurrent write load (~35–45 req/s).
 - `E2`: Gray failure (`docker pause minio-a`) socket freeze measuring client timeout impact.
 - `E3`: WAN latency (500ms) and bandwidth (32KB/s) injection via Toxiproxy.
-- `E4`: Asymmetric network partition with concurrent writes and Last-Write-Wins conflict resolution.
+- `E4`: Asymmetric one-way network partition (A->B cut via Toxiproxy :9002, B->A direct) with concurrent writes and Last-Write-Wins conflict resolution.
 - `E5`: Active gateway container termination during GitOps continuous deployment health gate.
 
 ### 3.3 Integrity Audit (`make audit`)
@@ -129,3 +129,4 @@ During the development and testing of Milestones M0 through M5, several subtle r
 - **Symptom**: RTO during `docker pause` clustered bimodally around either ~3.6s or ~7.2s.
 - **Root Cause**: Paused sockets do not return TCP RST. Client worker threads with a 2.0s timeout timed out before HAProxy's 2-second connect timeout and redispatch completed.
 - **Fix**: Tuned client request timeout to **3.5 seconds** in `e2_pause.py` (allowing HAProxy 2.0s connect timeout + redispatch to complete gracefully).
+

@@ -42,7 +42,7 @@
 **Answer**: Through a two-stage gate. First, pre-flight syntax validation (`docker compose config`) rejects malformed YAML before touching running containers. Second, after applying a targeted change, the reconciler evaluates an active post-apply health gate checking HTTP 200 on all endpoints. If any check fails within 15 seconds, it automatically reverts the worktree to `last_good`, recreates the container, and blacklists the faulty commit in `.gitops_state.json`.
 
 ### Q12: Can an asymmetric network partition cause permanent data loss?
-**Answer**: For independent object keys, no: writes made to either site during a partition are queued in MinIO's replication log and automatically replicate once the link heals (proven in Experiment E4: 20 partition writes synced in 4.91s). For conflicting writes (identical key modified on both sides during the cut), MinIO applies Last-Write-Wins; the object with the latest UTC timestamp wins, and the older version is superseded.
+**Answer**: In our setup, Toxiproxy sits specifically on the Region A -> Region B replication path (port 9002), whereas Region B replicates directly to Region A (port 9000). Experiment E4 tested an **asymmetric one-way partition** where traffic from A->B was cut by timeout toxics while B->A remained connected. For independent object keys, writes made to either site are queued in MinIO's replication log and automatically replicate once the link heals (proven in Experiment E4: 20 partition writes synced in 4.91s). For conflicting writes (identical key modified on both sides during the cut), MinIO applies Last-Write-Wins; the object with the latest UTC timestamp wins, and the older version is superseded.
 
 ### Q13: Why did you implement a custom AWS SigV4 client instead of importing `boto3`?
 **Answer**: To adhere strictly to the project constraint of **zero third-party dependencies**. `boto3` and `botocore` introduce hundreds of megabytes of external dependencies and transitive wheels. By implementing standard AWS Signature Version 4 HMAC-SHA256 signing using Python's standard `hashlib`, `hmac`, and `urllib`, the entire codebase runs out-of-the-box on any standard Python 3.10+ Linux install.
@@ -59,3 +59,4 @@
 - AT5 (GitOps Continuous Delivery): Proven auto-apply and auto-rollback.
 - AT6 & AT7 (Chaos Engineering & Resilience): 5 experiments validated in `make chaos`.
 - Single command `make demo` runs the full lifecycle in under 2 minutes with exit code 0.
+

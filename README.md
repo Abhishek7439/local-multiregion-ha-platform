@@ -50,6 +50,7 @@ Every metric below is extracted directly from runtime execution logs preserved i
 | **Site Replication** | AT2: Cross-region data sync | Identical SHA-256 (`2cf99d0e...`) across regions | **PASS** | `docs/04-test-evidence/m0-at1-at2.md` |
 | **Failover RTO** | AT3: Graceful stop failover | **`3448 ms`** (3s grace window + 443ms write probe) | **PASS** | `docs/04-test-evidence/m2-controller.md` |
 | **Integrity Failback** | AT4: Cryptographic gate | Metadata fast-path matches 143 objects in **`1.2s`** (123x speedup) | **PASS** | `docs/04-test-evidence/m3-failback-rpo.md` |
+| **Deep Audit** | Full SHA-256 payload audit | 149/149 objects verified bit-for-bit identical (`sha256_checked: 149`) | **PASS** | `docs/04-test-evidence/m6-deep-audit.md` |
 | **RPO (Graceful Stop)** | Sequential write stream | **`0` missing objects** (12/12 acknowledged writes preserved) | **PASS** | `docs/04-test-evidence/m3-failback-rpo.md` |
 | **RPO (SIGKILL)** | Sequential write stream | **`0` missing objects** (12/12 acknowledged writes preserved) | **PASS** | `docs/04-test-evidence/m3-failback-rpo.md` |
 | **GitOps Auto-Apply** | AT5 Phase A: Valid config change | Applied and verified healthy in **`8.0s – 10.0s`** | **PASS** | `docs/04-test-evidence/m4-gitops.md` |
@@ -83,7 +84,7 @@ Every metric below is extracted directly from runtime execution logs preserved i
 │       ├── e1_kill.py           # E1: Abrupt SIGKILL crash under concurrent write stream
 │       ├── e2_pause.py          # E2: Gray failure (docker pause socket freeze)
 │       ├── e3_latency.py        # E3: WAN latency (500ms) and bandwidth (32KB/s) injection
-│       ├── e4_partition.py      # E4: Asymmetric network partition & LWW conflict resolution
+│       ├── e4_partition.py      # E4: Asymmetric one-way partition & LWW conflict resolution
 │       └── e5_gitops_chaos.py   # E5: Failure injection during active GitOps continuous deployment
 ├── scripts/
 │   ├── doctor.sh                # System dependency and memory validation check
@@ -92,10 +93,10 @@ Every metric below is extracted directly from runtime execution logs preserved i
 │   └── mc.sh                    # Containerized MinIO client wrapper (zero host install required)
 └── docs/
     ├── 00-requirements-checklist.md  # Formal requirements and acceptance criteria traceability
-    ├── 01-decisions.md               # Architectural decision records (D1–D11)
+    ├── 01-decisions.md               # Architectural decision records (D1–D12)
     ├── 02-progress-log.md            # Chronological implementation journal
     ├── 03-architecture.md            # Comprehensive system design, diagrams, and limitations
-    ├── 04-test-evidence/             # Immutable empirical proof files for all milestones (M0–M5)
+    ├── 04-test-evidence/             # Immutable empirical proof files for all milestones (M0–M6)
     ├── 05-runbook.md                 # Operator guide, troubleshooting, and failure recovery
     ├── 06-reviewer-qa.md             # Reviewer technical Q&A defense document
     └── submission/
